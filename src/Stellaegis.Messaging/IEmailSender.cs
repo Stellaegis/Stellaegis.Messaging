@@ -1,3 +1,5 @@
+using Stellaegis.Primitives;
+
 namespace Stellaegis.Messaging;
 
 /// <summary>
@@ -6,14 +8,8 @@ namespace Stellaegis.Messaging;
 public interface IEmailSender
 {
     /// <summary>
-    /// Sends the given <paramref name="message"/> asynchronously, resolving configuration
-    /// from the current tenant context.
+    /// Sends <paramref name="message"/> with the messaging configuration of <paramref name="space"/>: a
+    /// compartment, or the shared space for mail that belongs to none.
     /// </summary>
-    Task SendAsync(EmailMessage message, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Sends the given <paramref name="message"/> asynchronously for an explicit tenant.
-    /// Use this overload from background workers that have no ambient tenant context.
-    /// </summary>
-    Task SendAsync(string tenantSlug, EmailMessage message, CancellationToken cancellationToken = default);
+    Task SendAsync(Space space, EmailMessage message, CancellationToken cancellationToken = default);
 }

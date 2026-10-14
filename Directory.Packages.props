@@ -9,6 +9,10 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.13" />
+    <!-- Stellaegis -->
+    <PackageVersion Include="Stellaegis.Caching" Version="1.0.0" />
+    <PackageVersion Include="Stellaegis.Primitives" Version="2.0.0" />
+    <PackageVersion Include="Stellaegis.Secrets" Version="1.0.2" />
     <!-- Templates -->
     <PackageVersion Include="Scriban" Version="7.5.0" />
     <!-- SMTP -->

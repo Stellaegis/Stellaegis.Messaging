@@ -48,13 +48,13 @@ public sealed record EmailMessage
     public string? TextBody { get; init; }
 
     /// <summary>
-    /// Optional override selecting a named transport from the tenant configuration.
+    /// Optional override selecting a named transport from the configuration of the space.
     /// When null, the transport is selected from the From address binding, then the "default" transport.
     /// </summary>
     public string? TransportName { get; init; }
 
     /// <summary>
-    /// Optional idempotency key. When set, a second enqueue with the same key for the same tenant is
+    /// Optional idempotency key. When set, a second enqueue with the same key for the same space is
     /// neutralized by the outbox (returns the existing message id) — so a retried caller does not send
     /// a duplicate. Not a MIME header: it is control metadata, never transmitted to the relay.
     /// </summary>

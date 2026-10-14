@@ -2,7 +2,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
-using Stellaegis.Backplane.SecretEvents;
 using Stellaegis.Caching;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Outbox;
@@ -16,39 +15,22 @@ namespace Stellaegis.Messaging;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the vault-backed <see cref="IEmailConfigResolver"/> (single blob per perimeter,
-    /// <c>messaging.{tenant}</c> → <c>messaging.default</c>) and its bounded, invalidatable cache.
-    /// Requires an <c>ISecretsProvider</c> to be registered by the host.
-    /// Reads options from the <c>Stellaegis:Messaging</c> section.
+    /// Registers the vault-backed <see cref="IEmailConfigResolver"/> (one blob per space) and its bounded
+    /// cache, with <see cref="IMessagingConfigCache"/> to evict it. Requires an <c>ISecretsProvider</c>
+    /// to be registered by the host. Reads options from the <c>Stellaegis:Messaging</c> section.
     /// </summary>
     /// <remarks>
-    /// The resolved configuration is cached in a keyed <see cref="BoundedCache"/> with segment
-    /// invalidation by vault path: a config edit publishes a <c>secret.changed</c> event that evicts the
-    /// affected perimeter, so the cache TTL can be long. Hosts that send mail should call
-    /// <c>UseStellaegisMessagingSecretsBackplane()</c> at startup to wire the subscription (mirrors the
-    /// tenant DB secret cache); without it, the TTL is the sole freshness mechanism.
+    /// Each cached configuration is attached to the vault paths it depends on. Edits made through
+    /// <see cref="IMessagingConfigStore"/> evict in this process; a host that learns of a change made
+    /// elsewhere calls <see cref="IMessagingConfigCache.Invalidate"/>. Without that call, the cache TTL is
+    /// the only freshness mechanism for edits made in another process.
     /// </remarks>
     public static IServiceCollection AddStellaegisEmailConfigResolver(
         this IServiceCollection services,
         IConfiguration configuration,
         string sectionName = MessagingOptions.SectionName)
     {
-        services.Configure<MessagingOptions>(configuration.GetSection(sectionName));
-
-        services.AddStellaegisBoundedCache(MessagingOptions.SecretCacheKey, sp =>
-        {
-            var options = sp.GetRequiredService<IOptions<MessagingOptions>>().Value;
-            return new BoundedCacheOptions
-            {
-                SizeLimit = options.SecretCacheSizeLimit,
-                Expiration = options.SecretCacheTtl,
-            };
-        });
-        // Segment invalidator for the config cache: entries are keyed to their vault path(s), so a
-        // backplane secret.changed event evicts exactly the affected entry (see UseStellaegisMessagingSecretsBackplane).
-        services.TryAddKeyedSingleton<CacheSegmentInvalidator>(MessagingOptions.SecretCacheKey);
-        services.AddStellaegisSecretsBackplaneEvents();
-
+        services.AddMessagingConfigCache(configuration, sectionName);
         services.TryAddScoped<IEmailConfigResolver, VaultEmailConfigResolver>();
         return services;
     }
@@ -57,8 +39,8 @@ public static class ServiceCollectionExtensions
     /// Registers the production email engine: the vault config resolver (<see cref="IEmailConfigResolver"/>)
     /// and the orchestrating <see cref="IEmailSender"/> that selects the transport, validates/degrades the
     /// From, and delegates to the registered <see cref="IEmailTransport"/>.
-    /// The host must also register an <see cref="IEmailTransport"/> (e.g. the SMTP transport),
-    /// an <c>ISecretsProvider</c> and an <c>ITenantContext</c>.
+    /// The host must also register an <see cref="IEmailTransport"/> (e.g. the SMTP transport) and an
+    /// <c>ISecretsProvider</c>.
     /// </summary>
     public static IServiceCollection AddStellaegisEmail(
         this IServiceCollection services,
@@ -98,10 +80,15 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Registers the vault-backed <see cref="IMessagingConfigStore"/> (masked read / merged write)
-    /// used by admin and CLI editing surfaces. Requires an <c>IMutableSecretsProvider</c>.
+    /// used by editing surfaces. Requires an <c>IMutableSecretsProvider</c>. Reads the cache options from
+    /// the <c>Stellaegis:Messaging</c> section, since the store evicts what it changes.
     /// </summary>
-    public static IServiceCollection AddStellaegisMessagingConfigStore(this IServiceCollection services)
+    public static IServiceCollection AddStellaegisMessagingConfigStore(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        string sectionName = MessagingOptions.SectionName)
     {
+        services.AddMessagingConfigCache(configuration, sectionName);
         services.TryAddScoped<IMessagingConfigStore, VaultMessagingConfigStore>();
         return services;
     }
@@ -130,5 +117,28 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ISystemTemplateProvider, SystemTemplateProvider>();
         services.TryAddTransient<ITemplateEmailSender, TemplateEmailSender>();
         return services;
+    }
+
+    // Shared by the resolver and the store, which evicts what it changes. Safe to call twice: the bounded
+    // cache keeps its first registration, and the singletons are added once.
+    private static void AddMessagingConfigCache(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        string sectionName)
+    {
+        services.Configure<MessagingOptions>(configuration.GetSection(sectionName));
+
+        services.AddStellaegisBoundedCache(MessagingOptions.ConfigCacheKey, sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<MessagingOptions>>().Value;
+            return new BoundedCacheOptions
+            {
+                SizeLimit = options.ConfigCacheSizeLimit,
+                Expiration = options.ConfigCacheTtl,
+            };
+        });
+
+        services.TryAddSingleton<MessagingConfigCache>();
+        services.TryAddSingleton<IMessagingConfigCache>(sp => sp.GetRequiredService<MessagingConfigCache>());
     }
 }

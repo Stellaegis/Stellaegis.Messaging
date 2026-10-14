@@ -1,3 +1,5 @@
+using Stellaegis.Primitives;
+
 namespace Stellaegis.Messaging.Outbox;
 
 /// <summary>
@@ -14,18 +16,18 @@ namespace Stellaegis.Messaging.Outbox;
 public interface IMessageOutbox
 {
     /// <summary>
-    /// Enqueues a finalized <paramref name="message"/> for the given tenant scope. The message must
+    /// Enqueues a finalized <paramref name="message"/> for the given space. The message must
     /// already be frozen (from-policy applied) — the worker sends it verbatim. When
-    /// <see cref="EmailMessage.IdempotencyKey"/> is set and a non-terminal entry already exists for the
-    /// same tenant and key, the existing message id is returned and nothing new is enqueued.
+    /// <see cref="EmailMessage.IdempotencyKey"/> is set and an entry already exists for the
+    /// same space and key, the existing message id is returned and nothing new is enqueued.
     /// </summary>
-    /// <param name="tenantSlug">Tenant scope (or <c>"default"</c> for system mail), used to resolve the transport at send time.</param>
+    /// <param name="space">The space whose configuration resolves the transport at send time.</param>
     /// <param name="message">The frozen message to deliver.</param>
     /// <param name="transportName">The transport name resolved at enqueue time, re-resolved against the vault at send time.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The stable public message id (<c>outbox_unique_id</c>).</returns>
     Task<Guid> EnqueueAsync(
-        string tenantSlug,
+        Space space,
         EmailMessage message,
         string? transportName,
         CancellationToken cancellationToken = default);
@@ -33,7 +35,7 @@ public interface IMessageOutbox
 
 /// <summary>
 /// Storage surface of the outbox, driven by the <see cref="OutboxProcessor"/> worker and implemented
-/// per backend (in-memory for F5, PostgreSQL for durable hosts). Extends <see cref="IMessageOutbox"/>
+/// per backend (in memory, or PostgreSQL for durable hosts). Extends <see cref="IMessageOutbox"/>
 /// so a single registered instance serves both producers and the worker.
 /// </summary>
 /// <remarks>
@@ -85,8 +87,8 @@ public sealed record OutboxEntry
     /// <summary>Stable public message id (<c>outbox_unique_id</c>).</summary>
     public required Guid MessageId { get; init; }
 
-    /// <summary>Tenant scope used to resolve the transport (or <c>"default"</c> for system mail).</summary>
-    public required string TenantSlug { get; init; }
+    /// <summary>The space whose configuration resolves the transport.</summary>
+    public required Space Space { get; init; }
 
     /// <summary>The frozen message to deliver.</summary>
     public required EmailMessage Message { get; init; }

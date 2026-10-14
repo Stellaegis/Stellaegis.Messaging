@@ -2,20 +2,14 @@ using System.Text.Json.Serialization;
 
 namespace Stellaegis.Messaging.Configuration;
 
-// Deserialized from the single per-perimeter vault blob (messaging.{tenant} → messaging.default).
-// JSON keys are camelCase; the resolver deserializes with PropertyNameCaseInsensitive = true.
+// Deserialized from the single vault blob of a space. JSON keys are camelCase; the resolver
+// deserializes with PropertyNameCaseInsensitive = true.
 //
-// About the [JsonConverter] attributes on the enums below — they do NOT describe the wire format, and
-// removing them would break persistence. Two serialization paths run over these types:
-//
-//   HTTP    the hosts register a global JsonStringEnumConverter(CamelCase) (Stellaegis.AspNetCore). A
-//           converter held in Converters takes precedence over a [JsonConverter] on the type, so the
-//           attributes are inert here and the wire carries "basic", "startTls", "domainAuthorized"…
-//           A client that trusts the attribute and compares "Basic" never matches (bug of 2026-07-22).
-//   Vault / outbox
-//           VaultMessagingConfigStore and PostgreSqlMessageOutboxStore serialize with their own options,
-//           which register no enum converter. There the attributes are load-bearing: without them the
-//           enums would persist as numbers, and every stored configuration would become unreadable.
+// The [JsonConverter] attributes on the enums below are what the vault and the outbox store: their
+// serializer options register no enum converter, so without the attributes the enums would persist as
+// numbers and every stored configuration would become unreadable. They do NOT describe an HTTP API: a
+// converter registered in JsonSerializerOptions.Converters takes precedence over the attribute, so a host
+// with a global camelCase enum converter answers "startTls" or "domainAuthorized", never "StartTls".
 
 /// <summary>TLS mode for an SMTP connection. Mapped to MailKit's SecureSocketOptions by the SMTP transport.</summary>
 [JsonConverter(typeof(JsonStringEnumConverter<SmtpSecurity>))]
@@ -49,13 +43,13 @@ public enum TransportAuth
 [JsonConverter(typeof(JsonStringEnumConverter<FromPolicyKind>))]
 public enum FromPolicyKind
 {
-    /// <summary>Any address within the verified domain(s) is allowed (régime 2).</summary>
+    /// <summary>Any address within the verified domain(s) is allowed.</summary>
     DomainAuthorized,
 
-    /// <summary>From is forced to the connection mailbox address (régime 1).</summary>
+    /// <summary>From is forced to the connection mailbox address.</summary>
     MailboxBound,
 
-    /// <summary>No From filtering (régime 3, IP-trusted legacy relays).</summary>
+    /// <summary>No From filtering, as on a relay that trusts the source IP.</summary>
     IpUnrestricted
 }
 
@@ -128,10 +122,10 @@ public sealed record TransportConfig
 }
 
 /// <summary>
-/// A declared emission address. Optional overall: absent when the tenant owns a domain-authorized
-/// connector (From is free within the authorized domain, e.g. sourced from business data).
-/// Present to control local-parts on a shared system relay, or to bind an address to a dedicated
-/// transport (régime 1, per-address credentials).
+/// A declared emission address. Optional overall: absent when the relay authorizes a whole domain
+/// (From is free within it, e.g. sourced from business data). Present to control local-parts on a
+/// shared relay, or to bind an address to a dedicated transport (a mailbox-bound relay, per-address
+/// credentials).
 /// </summary>
 public sealed record FromAddress
 {
@@ -149,7 +143,7 @@ public sealed record FromAddress
 }
 
 /// <summary>
-/// Messaging configuration for one perimeter (a tenant, or the "default" system scope),
+/// Messaging configuration of one space (a compartment, or the shared space),
 /// stored as a single vault blob with inline credentials.
 /// </summary>
 public sealed record MessagingConfig

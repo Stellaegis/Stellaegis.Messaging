@@ -1,24 +1,20 @@
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Stellaegis.Caching;
 using Stellaegis.Messaging.Configuration;
+using Stellaegis.Primitives;
 using Stellaegis.Secrets;
 
 namespace Stellaegis.Messaging;
 
 /// <summary>
 /// Resolves messaging configuration from the secrets vault, with a bounded in-memory cache.
-/// Reads the single per-perimeter blob (<c>messaging.{tenantSlug}</c>) and, when absent,
-/// falls back to the system scope (<c>messaging.default</c>). Mirrors the vault access of
-/// <c>TenantDbConnectionFactory</c> (dotted internal path → provider separator, bounded cache with
-/// backplane invalidation).
+/// Reads the single blob of the space and, for a compartment that has none, the shared space's blob
+/// when <see cref="MessagingOptions.InheritSharedSpace"/> is set.
 /// </summary>
 internal sealed class VaultEmailConfigResolver(
     ISecretsProvider secrets,
-    [FromKeyedServices(MessagingOptions.SecretCacheKey)] BoundedCache cache,
-    [FromKeyedServices(MessagingOptions.SecretCacheKey)] CacheSegmentInvalidator cacheInvalidator,
+    MessagingConfigCache cache,
     IOptions<MessagingOptions> options,
     ILogger<VaultEmailConfigResolver> logger) : IEmailConfigResolver
 {
@@ -30,61 +26,58 @@ internal sealed class VaultEmailConfigResolver(
     private readonly MessagingOptions _options = options.Value;
 
     /// <inheritdoc />
-    public async Task<MessagingConfig?> ResolveAsync(string tenantSlug, CancellationToken cancellationToken = default)
+    public async Task<MessagingConfig?> ResolveAsync(Space space, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantSlug);
+        Guard.NotNull(space);
 
-        var cacheKey = $"messaging:config:{tenantSlug}";
-        if (cache.TryGet(cacheKey, out MessagingConfig? cached) && cached is not null)
+        if (cache.TryGet(space, out var cached))
             return cached;
 
-        // messaging.{tenant} → fallback messaging.default (system scope, defined by the SaaS developer).
-        // Absent from both scopes → null: no relay configured yet, the caller degrades to logging.
-        var config = await LoadAsync(tenantSlug, cancellationToken).ConfigureAwait(false)
-                     ?? await LoadAsync(MessagingScopes.System, cancellationToken).ConfigureAwait(false);
+        var ownPath = MessagingSecretPaths.For(space);
+        var config = await LoadAsync(ownPath, cancellationToken).ConfigureAwait(false);
+        var sources = new List<SecretPath> { ownPath };
+
+        if (!space.IsShared && _options.InheritSharedSpace)
+        {
+            // The entry depends on both paths whichever one answered: the subtle case is a compartment
+            // configuration added later, for an entry currently served by the shared space.
+            var sharedPath = MessagingSecretPaths.For(Space.Shared);
+            sources.Add(sharedPath);
+            config ??= await LoadAsync(sharedPath, cancellationToken).ConfigureAwait(false);
+        }
 
         if (config is null)
             return null;
 
-        // Link the entry to BOTH candidate vault paths so a secret.changed event evicts it immediately,
-        // whichever blob produced (or will produce) the value: the tenant blob, the system-default blob,
-        // or — the subtle case — a tenant override added later for an entry currently served by default.
-        var tokens = new[]
-        {
-            cacheInvalidator.GetToken(MessagingVaultPath.For(tenantSlug, secrets.Separator)),
-            cacheInvalidator.GetToken(MessagingVaultPath.For(MessagingScopes.System, secrets.Separator)),
-        };
-        cache.Set(cacheKey, config, tokens, ttl: _options.SecretCacheTtl);
+        cache.Set(space, config, sources, _options.ConfigCacheTtl);
         return config;
     }
 
-    private async Task<MessagingConfig?> LoadAsync(string scope, CancellationToken cancellationToken)
+    private async Task<MessagingConfig?> LoadAsync(SecretPath path, CancellationToken cancellationToken)
     {
-        var vaultPath = MessagingVaultPath.For(scope, secrets.Separator);
-
         string secretJson;
         try
         {
-            secretJson = await secrets.GetSecretAsync(vaultPath, cancellationToken).ConfigureAwait(false);
+            secretJson = await secrets.GetSecretAsync(path, cancellationToken).ConfigureAwait(false);
         }
         catch (KeyNotFoundException)
         {
-            return null; // scope not configured — the caller falls back to the system scope
+            return null;
         }
 
         try
         {
             var config = JsonSerializer.Deserialize<MessagingConfig>(secretJson, JsonOptions)
                          ?? throw new InvalidOperationException(
-                             $"Empty messaging configuration at vault path '{vaultPath}'.");
+                             $"Empty messaging configuration at vault path '{path}'.");
 
-            logger.LogDebug("Resolved messaging config from vault: {VaultPath}", vaultPath);
+            logger.LogDebug("Resolved messaging config from vault: {VaultPath}", path);
             return config;
         }
         catch (JsonException ex)
         {
             throw new InvalidOperationException(
-                $"Invalid messaging configuration JSON at vault path '{vaultPath}'.", ex);
+                $"Invalid messaging configuration JSON at vault path '{path}'.", ex);
         }
     }
 }

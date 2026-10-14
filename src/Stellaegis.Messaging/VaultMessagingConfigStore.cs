@@ -1,17 +1,19 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Stellaegis.Messaging.Configuration;
+using Stellaegis.Primitives;
 using Stellaegis.Secrets;
 
 namespace Stellaegis.Messaging;
 
 /// <summary>
-/// Vault-backed <see cref="IMessagingConfigStore"/>. Reads/writes the single per-perimeter blob
+/// Vault-backed <see cref="IMessagingConfigStore"/>. Reads/writes the single blob of a space
 /// via <see cref="IMutableSecretsProvider"/>, masking secret credential fields on read and merging
 /// them back on write.
 /// </summary>
 internal sealed class VaultMessagingConfigStore(
     IMutableSecretsProvider secrets,
+    MessagingConfigCache cache,
     ILogger<VaultMessagingConfigStore> logger) : IMessagingConfigStore
 {
     private static readonly JsonSerializerOptions ReadOptions = new()
@@ -22,45 +24,43 @@ internal sealed class VaultMessagingConfigStore(
     private static readonly JsonSerializerOptions WriteOptions = new(JsonSerializerDefaults.Web);
 
     /// <inheritdoc />
-    public async Task<MessagingConfig?> GetAsync(string scope, CancellationToken cancellationToken = default)
+    public async Task<MessagingConfig?> GetAsync(Space space, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
+        var path = MessagingSecretPaths.For(Guard.NotNull(space));
 
-        var config = await LoadRawAsync(scope, cancellationToken).ConfigureAwait(false);
+        var config = await LoadRawAsync(path, cancellationToken).ConfigureAwait(false);
         return config is null ? null : MaskSecrets(config);
     }
 
     /// <inheritdoc />
-    public async Task SaveAsync(string scope, MessagingConfig config, CancellationToken cancellationToken = default)
+    public async Task SaveAsync(Space space, MessagingConfig config, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
-        ArgumentNullException.ThrowIfNull(config);
+        var path = MessagingSecretPaths.For(Guard.NotNull(space));
+        Guard.NotNull(config);
 
-        var existing = await LoadRawAsync(scope, cancellationToken).ConfigureAwait(false);
+        var existing = await LoadRawAsync(path, cancellationToken).ConfigureAwait(false);
         var merged = MergeSecrets(config, existing);
 
         var json = JsonSerializer.Serialize(merged, WriteOptions);
-        var path = MessagingVaultPath.For(scope, secrets.Separator);
         await secrets.SetSecretAsync(path, json, cancellationToken).ConfigureAwait(false);
+        cache.Invalidate(path);
 
-        logger.LogInformation("Saved messaging configuration for scope '{Scope}'.", scope);
+        logger.LogInformation("Saved messaging configuration for space {Space}.", space);
     }
 
     /// <inheritdoc />
-    public async Task DeleteAsync(string scope, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Space space, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
+        var path = MessagingSecretPaths.For(Guard.NotNull(space));
 
-        var path = MessagingVaultPath.For(scope, secrets.Separator);
         await secrets.DeleteSecretAsync(path, cancellationToken).ConfigureAwait(false);
+        cache.Invalidate(path);
 
-        logger.LogInformation("Deleted messaging configuration for scope '{Scope}'.", scope);
+        logger.LogInformation("Deleted messaging configuration for space {Space}.", space);
     }
 
-    private async Task<MessagingConfig?> LoadRawAsync(string scope, CancellationToken cancellationToken)
+    private async Task<MessagingConfig?> LoadRawAsync(SecretPath path, CancellationToken cancellationToken)
     {
-        var path = MessagingVaultPath.For(scope, secrets.Separator);
-
         string json;
         try
         {

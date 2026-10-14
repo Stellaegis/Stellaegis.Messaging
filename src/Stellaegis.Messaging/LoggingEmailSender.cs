@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Stellaegis.Primitives;
 
 namespace Stellaegis.Messaging;
 
@@ -8,12 +9,9 @@ namespace Stellaegis.Messaging;
 /// </summary>
 internal sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEmailSender
 {
-    public Task SendAsync(EmailMessage message, CancellationToken cancellationToken = default)
+    public Task SendAsync(Space space, EmailMessage message, CancellationToken cancellationToken = default)
     {
         DevEmailLog.Write(logger, message, "dev — no SMTP configured");
         return Task.CompletedTask;
     }
-
-    public Task SendAsync(string tenantSlug, EmailMessage message, CancellationToken cancellationToken = default)
-        => SendAsync(message, cancellationToken);
 }

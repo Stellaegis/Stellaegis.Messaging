@@ -1,5 +1,6 @@
 using Scriban;
 using Scriban.Runtime;
+using Stellaegis.Primitives;
 
 namespace Stellaegis.Messaging.Templates;
 
@@ -9,6 +10,7 @@ internal sealed class TemplateEmailSender(
     IEmailSender emailSender) : ITemplateEmailSender
 {
     public async Task SendAsync(
+        Space space,
         string templateName,
         object data,
         string to,
@@ -19,7 +21,7 @@ internal sealed class TemplateEmailSender(
         var raw = await templateProvider.GetTemplateAsync(templateName, cancellationToken);
         var html = await RenderAsync(raw, data);
 
-        await emailSender.SendAsync(new EmailMessage
+        await emailSender.SendAsync(space, new EmailMessage
         {
             To = [new EmailAddress(to, toName)],
             Subject = subject,

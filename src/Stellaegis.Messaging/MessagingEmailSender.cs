@@ -1,55 +1,39 @@
 using Microsoft.Extensions.Logging;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Outbox;
-using Stellaegis.MultiTenant.Context;
+using Stellaegis.Primitives;
 
 namespace Stellaegis.Messaging;
 
 /// <summary>
-/// Default <see cref="IEmailSender"/>: resolves the tenant messaging configuration, selects the
+/// Default <see cref="IEmailSender"/>: resolves the messaging configuration of the space, selects the
 /// transport, validates and (if needed) degrades the From against the transport's from-policy,
 /// then <b>enqueues</b> the finalized message on the <see cref="IMessageOutbox"/> for reliable delivery.
 /// </summary>
 /// <remarks>
 /// The transport engine owns the transport; the developer owns the message. Config resolution
-/// happens per send (like <c>TenantDbConnectionFactory</c>), never via static options.
+/// happens per send, never via static options.
 /// The from-policy is applied here so the message is <i>frozen</i> before it enters the outbox; the
 /// worker sends it verbatim and re-resolves the transport connection at send time.
-/// The tenant context is optional: hosts that are not tenant-scoped (e.g. the Identity server,
-/// which sends system emails) resolve the system scope (<c>messaging.default</c>) directly.
 /// </remarks>
 internal sealed class MessagingEmailSender(
-    IEnumerable<ITenantContext> tenantContexts,
     IEmailConfigResolver configResolver,
     IMessageOutbox outbox,
     ILogger<MessagingEmailSender> logger) : IEmailSender
 {
     private const string DefaultTransportName = "default";
 
-    private readonly ITenantContext? _tenantContext = tenantContexts.FirstOrDefault();
-
     /// <inheritdoc />
-    public Task SendAsync(EmailMessage message, CancellationToken cancellationToken = default)
+    public async Task SendAsync(Space space, EmailMessage message, CancellationToken cancellationToken = default)
     {
-        // No ambient tenant (non-tenant host, or a system route) → system scope (messaging.default).
-        var tenantSlug = _tenantContext is not null && _tenantContext.TryGetTenantSlug(out var slug)
-            ? slug
-            : MessagingScopes.System;
+        Guard.NotNull(space);
+        Guard.NotNull(message);
 
-        return SendAsync(tenantSlug, message, cancellationToken);
-    }
-
-    /// <inheritdoc />
-    public async Task SendAsync(string tenantSlug, EmailMessage message, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantSlug);
-        ArgumentNullException.ThrowIfNull(message);
-
-        var config = await configResolver.ResolveAsync(tenantSlug, cancellationToken).ConfigureAwait(false);
+        var config = await configResolver.ResolveAsync(space, cancellationToken).ConfigureAwait(false);
         if (config is null)
         {
-            // No relay configured yet (neither messaging.{tenant} nor messaging.default). The safe
-            // default is to show the message, never to send one before the relay is set up.
+            // No relay configured yet for this space. The safe default is to show the message, never
+            // to send one before the relay is set up.
             DevEmailLog.Write(logger, message, "no relay configured");
             return;
         }
@@ -62,13 +46,13 @@ internal sealed class MessagingEmailSender(
         var transportName = message.TransportName ?? boundEntry?.Transport ?? DefaultTransportName;
         if (!config.Transports.TryGetValue(transportName, out var transportConfig))
             throw new InvalidOperationException(
-                $"Messaging transport '{transportName}' is not configured for tenant '{tenantSlug}'.");
+                $"Messaging transport '{transportName}' is not configured for space {space}.");
 
-        var prepared = PrepareMessage(message, config, transportConfig, transportName, boundEntry, tenantSlug);
+        var prepared = PrepareMessage(message, config, transportConfig, transportName, boundEntry, space);
 
         // Hand the frozen message to the outbox; the worker delivers it (retries, dead-letter) and
         // re-resolves the transport connection at send time so no credential enters the buffer.
-        await outbox.EnqueueAsync(tenantSlug, prepared, transportName, cancellationToken).ConfigureAwait(false);
+        await outbox.EnqueueAsync(space, prepared, transportName, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -81,7 +65,7 @@ internal sealed class MessagingEmailSender(
         TransportConfig transportConfig,
         string transportName,
         FromAddress? boundEntry,
-        string tenantSlug)
+        Space space)
     {
         var replyTo = new List<EmailAddress>(message.ReplyTo);
         if (replyTo.Count == 0 && !string.IsNullOrWhiteSpace(boundEntry?.ReplyTo))
@@ -90,7 +74,7 @@ internal sealed class MessagingEmailSender(
         var desiredFrom = message.From ?? transportConfig.DefaultFrom ?? config.DefaultFrom
             ?? throw new InvalidOperationException(
                 $"Message has no From and no defaultFrom is configured " +
-                $"(transport '{transportName}', tenant '{tenantSlug}').");
+                $"(transport '{transportName}', space {space}).");
 
         var policy = transportConfig.FromPolicy;
         var kind = policy?.Kind ?? FromPolicyKind.IpUnrestricted;
@@ -122,8 +106,8 @@ internal sealed class MessagingEmailSender(
                     effectiveFrom = new EmailAddress(fallback.Address, desiredFrom.Name ?? fallback.Name);
                     AddReplyTo(replyTo, desiredFrom);
                     logger.LogWarning(
-                        "From '{Desired}' degraded to '{Effective}' on transport '{Transport}' (tenant '{Tenant}').",
-                        desiredFrom.Address, effectiveFrom.Address, transportName, tenantSlug);
+                        "From '{Desired}' degraded to '{Effective}' on transport '{Transport}' (space {Space}).",
+                        desiredFrom.Address, effectiveFrom.Address, transportName, space);
                 }
 
                 sender = SanitizeSender(sender, policy!);

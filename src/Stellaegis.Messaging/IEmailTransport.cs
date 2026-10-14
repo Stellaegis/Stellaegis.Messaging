@@ -4,7 +4,7 @@ namespace Stellaegis.Messaging;
 
 /// <summary>
 /// Low-level transport that opens a connection to a relay and sends one message.
-/// Stateless with respect to tenant and vault: it receives an already-resolved
+/// Stateless with respect to space and vault: it receives an already-resolved
 /// <see cref="ResolvedTransport"/> per call. Implemented per protocol (SMTP in Stellaegis.Messaging.Smtp).
 /// </summary>
 /// <remarks>

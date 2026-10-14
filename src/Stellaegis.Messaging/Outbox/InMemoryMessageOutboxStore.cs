@@ -1,14 +1,16 @@
+using Stellaegis.Primitives;
+
 namespace Stellaegis.Messaging.Outbox;
 
 /// <summary>
-/// In-memory <see cref="IMessageOutboxStore"/> for F5 / InMemory hosts: it exercises the exact same
+/// In-memory <see cref="IMessageOutboxStore"/>, for development and tests: it exercises the exact same
 /// enqueue → claim → deliver → retry / dead-letter path as the PostgreSQL store, without persistence.
 /// Not durable across a restart — hosts that need durability register the PostgreSQL store instead.
 /// </summary>
 /// <remarks>
 /// Thread-safe: producers enqueue while the worker claims. Idempotency is existence-based (mirrors the
 /// PostgreSQL <c>ux_outbox_idempotency</c> unique index over any status): while an entry with a given
-/// (tenant, key) exists, a re-enqueue returns the existing id. FIFO ordering uses a monotonic sequence.
+/// (space, key) exists, a re-enqueue returns the existing id. FIFO ordering uses a monotonic sequence.
 /// </remarks>
 internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
 {
@@ -18,7 +20,7 @@ internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
 
     /// <inheritdoc />
     public Task<Guid> EnqueueAsync(
-        string tenantSlug,
+        Space space,
         EmailMessage message,
         string? transportName,
         CancellationToken cancellationToken = default)
@@ -30,7 +32,7 @@ internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
             if (key is not null)
             {
                 var existing = _entries.Values.FirstOrDefault(
-                    e => e.TenantSlug == tenantSlug && e.IdempotencyKey == key);
+                    e => e.Space == space && e.IdempotencyKey == key);
                 if (existing is not null)
                     return Task.FromResult(existing.MessageId);
             }
@@ -39,7 +41,7 @@ internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
             _entries[id] = new Entry
             {
                 MessageId = id,
-                TenantSlug = tenantSlug,
+                Space = space,
                 Message = message,
                 TransportName = transportName,
                 IdempotencyKey = key,
@@ -155,7 +157,7 @@ internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
         {
             return _entries.Values
                 .OrderBy(e => e.Sequence)
-                .Select(e => new OutboxSnapshot(e.MessageId, e.TenantSlug, e.Status, e.Attempts, e.LastError))
+                .Select(e => new OutboxSnapshot(e.MessageId, e.Space, e.Status, e.Attempts, e.LastError))
                 .ToList();
         }
     }
@@ -163,7 +165,7 @@ internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
     private static OutboxEntry ToClaim(Entry e) => new()
     {
         MessageId = e.MessageId,
-        TenantSlug = e.TenantSlug,
+        Space = e.Space,
         Message = e.Message,
         TransportName = e.TransportName,
         Attempts = e.Attempts,
@@ -173,7 +175,7 @@ internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
     private sealed class Entry
     {
         public required Guid MessageId { get; init; }
-        public required string TenantSlug { get; init; }
+        public required Space Space { get; init; }
         public required EmailMessage Message { get; init; }
         public string? TransportName { get; init; }
         public string? IdempotencyKey { get; init; }
@@ -197,4 +199,4 @@ internal enum OutboxStatus
 }
 
 /// <summary>Test-only projection of an in-memory outbox entry.</summary>
-internal sealed record OutboxSnapshot(Guid MessageId, string TenantSlug, OutboxStatus Status, int Attempts, string? LastError);
+internal sealed record OutboxSnapshot(Guid MessageId, Space Space, OutboxStatus Status, int Attempts, string? LastError);

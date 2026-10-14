@@ -116,14 +116,14 @@ public sealed class OutboxProcessor(
         var now = DateTimeOffset.UtcNow;
         try
         {
-            var config = await resolver.ResolveAsync(entry.TenantSlug, cancellationToken).ConfigureAwait(false)
+            var config = await resolver.ResolveAsync(entry.Space, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException(
-                    $"No messaging relay is configured for tenant '{entry.TenantSlug}' at send time.");
+                    $"No messaging relay is configured for space {entry.Space} at send time.");
 
             var transportName = entry.TransportName ?? "default";
             if (!config.Transports.TryGetValue(transportName, out var transportConfig))
                 throw new InvalidOperationException(
-                    $"Messaging transport '{transportName}' is not configured for tenant '{entry.TenantSlug}'.");
+                    $"Messaging transport '{transportName}' is not configured for space {entry.Space}.");
 
             await transport
                 .SendAsync(ToResolvedTransport(transportConfig), entry.Message, cancellationToken)
@@ -135,7 +135,7 @@ public sealed class OutboxProcessor(
 
             await store.MarkSentAsync(entry.MessageId, retainUntil, cancellationToken).ConfigureAwait(false);
             logger.LogInformation(
-                "Outbox message {MessageId} sent (tenant '{Tenant}').", entry.MessageId, entry.TenantSlug);
+                "Outbox message {MessageId} sent (space {Space}).", entry.MessageId, entry.Space);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -152,8 +152,8 @@ public sealed class OutboxProcessor(
                 await store.MarkDeadLetterAsync(entry.MessageId, now + _options.DeadLetterTtl, error, CancellationToken.None)
                     .ConfigureAwait(false);
                 logger.LogError(ex,
-                    "Outbox message {MessageId} dead-lettered after {Attempts} attempts (tenant '{Tenant}').",
-                    entry.MessageId, attemptsAfter, entry.TenantSlug);
+                    "Outbox message {MessageId} dead-lettered after {Attempts} attempts (space {Space}).",
+                    entry.MessageId, attemptsAfter, entry.Space);
             }
             else
             {
@@ -161,8 +161,8 @@ public sealed class OutboxProcessor(
                 await store.MarkForRetryAsync(entry.MessageId, nextAttemptAt, error, CancellationToken.None)
                     .ConfigureAwait(false);
                 logger.LogWarning(ex,
-                    "Outbox message {MessageId} attempt {Attempt} failed; retrying at {NextAttempt} (tenant '{Tenant}').",
-                    entry.MessageId, attemptsAfter, nextAttemptAt, entry.TenantSlug);
+                    "Outbox message {MessageId} attempt {Attempt} failed; retrying at {NextAttempt} (space {Space}).",
+                    entry.MessageId, attemptsAfter, nextAttemptAt, entry.Space);
             }
         }
     }
