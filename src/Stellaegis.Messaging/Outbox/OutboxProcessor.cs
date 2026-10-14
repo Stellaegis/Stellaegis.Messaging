@@ -12,10 +12,10 @@ namespace Stellaegis.Messaging.Outbox;
 /// retry / dead-letter policy. Also purges expired terminal entries on an interval.
 /// </summary>
 /// <remarks>
-/// Each cycle runs in its own DI scope so a scoped store (PostgreSQL, one connection) claims and
-/// finalizes on the same instance; entries are delivered sequentially within the cycle (a scoped
-/// connection forbids concurrent commands). The message is sent verbatim (frozen at enqueue); only the
-/// transport connection is late-bound here.
+/// Each cycle runs in its own DI scope, so that a scoped store or resolver claims and finalizes on the
+/// same instance; entries are delivered sequentially within the cycle, which a store holding a single
+/// connection requires. The message is sent verbatim (frozen at enqueue); only the transport
+/// connection is late-bound here.
 /// </remarks>
 public sealed class OutboxProcessor(
     IServiceScopeFactory scopeFactory,
