@@ -1,11 +1,12 @@
 # Stellaegis.Messaging
 
 Stellaegis.Messaging is a .NET library that sends transactional email — a password reset, an
-invitation, an invoice notice — for an application whose data is partitioned into compartments. Each
-compartment can have its own relay, its own credentials and its own sender addresses. The library
-keeps that configuration in a secrets vault, decides which sender address a relay accepts, and
-delivers through an outbox, which retries a message when the relay is unreachable and keeps it for
-inspection when every attempt has failed.
+invitation, an invoice notice. It suits an application with a single relay as well as one whose data
+is partitioned into compartments, where each compartment can have its own relay, its own credentials
+and its own sender addresses. The library reads that configuration from your application's
+configuration or from a secrets vault, decides which sender address a relay accepts, and delivers
+through an outbox, which retries a message when the relay is unreachable and keeps it for inspection
+when every attempt has failed.
 
 The library sends a message whose content you have produced. Finding a template and rendering it is
 left to your application and to the template engine of your choice.
@@ -14,9 +15,12 @@ The library targets .NET 10 and is released under the MIT license.
 
 ## Packages
 
+The library is split so that you only take the dependencies of what you use.
+
 | Package | Contents | Depends on |
 | --- | --- | --- |
-| `Stellaegis.Messaging` | `EmailMessage` and `IEmailSender`, the configuration of a space and its resolution from a vault, the sender-address policy, the outbox and its background worker, an in-memory outbox store | `Stellaegis.Primitives`, `Stellaegis.Secrets`, `Stellaegis.Caching`, Microsoft.Extensions abstractions |
+| `Stellaegis.Messaging` | `EmailMessage` and `IEmailSender`, the configuration of a space and its reading from a configuration section, the sender-address policy, the outbox and its background worker, an in-memory outbox store | `Stellaegis.Primitives`, Microsoft.Extensions abstractions |
+| `Stellaegis.Messaging.Secrets` | The configuration of each space in a secrets vault, read through a cache, and a store to edit it | `Stellaegis.Secrets`, `Stellaegis.Caching` |
 | `Stellaegis.Messaging.MailKit` | The SMTP transport, on MailKit: Basic or client-certificate authentication, explicit envelope sender | MailKit |
 | `Stellaegis.Messaging.PostgreSQL` | A durable outbox store: messages encrypted at rest with pgcrypto | Npgsql, Dapper, `Stellaegis.Primitives.Data` |
 
@@ -27,7 +31,7 @@ client, or the HTTP API of an email provider — can be added as a package of it
 
 1. Your code calls `IEmailSender.SendAsync(space, message)`. The space says whose message it is: a
    compartment, or the shared space (see *Spaces* below).
-2. The sender reads the configuration of that space from the vault, through a cache.
+2. The sender reads the configuration of that space, from the source you registered.
 3. It selects a transport — a named relay — and applies that transport's sender-address policy: the
    `From` address is kept, replaced, or the message is refused.
 4. The message, now final, is written to the outbox. `SendAsync` returns at that point. The message
@@ -37,18 +41,37 @@ client, or the HTTP API of an email provider — can be added as a package of it
 6. A failed attempt is retried later, with a growing delay. Once the attempt limit is reached, the
    message becomes a dead letter: it stays in the outbox for inspection, and is purged after a while.
 
-Credentials never enter the outbox. The worker reads them from the vault at send time, so a password
-changed between the two steps is the one used.
+Credentials never enter the outbox. The worker reads them from the configuration source at send time,
+so a password changed between the two steps is the one used.
 
 ## Getting started
 
-Register a secrets provider (see `Stellaegis.Secrets`), the messaging engine and a transport:
+Register the messaging engine, the source of its configuration and a transport. With one relay, the
+configuration comes from your application's configuration:
 
 ```csharp
-builder.Services.AddDatabaseSecretsProvider(builder.Configuration);   // or any ISecretsProvider
 builder.Services.AddStellaegisEmail(builder.Configuration);
+builder.Services.AddStellaegisEmailConfiguration(builder.Configuration);
 builder.Services.AddStellaegisMailKitTransport();
 ```
+
+With a relay per compartment, it comes from a secrets vault, through `Stellaegis.Messaging.Secrets`
+and any provider of `Stellaegis.Secrets`:
+
+```csharp
+builder.Services.AddDatabaseSecretsProvider(builder.Configuration);
+builder.Services.AddStellaegisEmail(builder.Configuration);
+builder.Services.AddStellaegisEmailVaultConfiguration(builder.Configuration);
+builder.Services.AddStellaegisMailKitTransport();
+```
+
+| | Configuration section | Vault |
+| --- | --- | --- |
+| Configurations | one, for the shared space | one per space |
+| Where it lives | `appsettings.json`, environment variables, user secrets, any configuration provider | a secret per space, in the vault of your choice |
+| Editing from the application | no: the configuration is deployed with the application | yes, through `IMessagingConfigStore` |
+| A change takes effect | at the next send, when the configuration provider reloads | at the next send once evicted from the cache (see *Keeping the cached configuration fresh*) |
+| Dependencies | none beyond the core | `Stellaegis.Secrets`, `Stellaegis.Caching` |
 
 `AddStellaegisEmail` registers the outbox worker as a hosted service, so the application must run as a
 .NET host (`WebApplication`, `Host.CreateApplicationBuilder`, or a worker service). By default the
@@ -70,16 +93,16 @@ public sealed class InvitationMailer(IEmailSender email)
 }
 ```
 
-A `Compartment` converts to a `Space` implicitly. For mail that belongs to no compartment, pass
-`Space.Shared`.
+A `Compartment` converts to a `Space` implicitly. For mail that belongs to no compartment, or in an
+application without compartments, pass `Space.Shared`.
 
 ### During development
 
 Two choices are available while no relay exists:
 
 - `AddStellaegisLoggingEmail()` registers a sender that writes each message to the console and to the
-  log, and sends nothing. It needs no vault and no configuration.
-- `AddStellaegisEmail` with no configuration in the vault does the same: a space without a relay has
+  log, and sends nothing. It needs no configuration.
+- `AddStellaegisEmail` with no configuration for the space does the same: a space without a relay has
   its messages written to the log, never sent. This keeps the whole pipeline in place, so that adding
   a configuration later is enough to start sending.
 
@@ -89,7 +112,8 @@ The library partitions its configuration and its outbox by **space**, a type of
 `Stellaegis.Primitives`. A space is either a compartment — a tenant, an organization, any partition
 your application names — or the shared space, for what belongs to no compartment.
 
-The configuration of a space is one secret in the vault:
+A configuration section describes the shared space. In a vault, the configuration of each space is one
+secret:
 
 | Space | Secret path |
 | --- | --- |
@@ -120,67 +144,101 @@ shared space instead:
 | What it protects | No compartment reaches the shared relay unless you decide so | Every compartment can send from the first day |
 | What it costs | Each compartment needs its configuration before it sends | Mail of a compartment leaves under an identity that is not its own |
 
-A compartment that has its own configuration always uses it, whatever the option says.
+A compartment that has its own configuration always uses it, whatever the option says. With a
+configuration section, no compartment has a configuration of its own: set the option if your
+application sends under a compartment rather than `Space.Shared`.
 
 ## The configuration of a space
 
-The secret holds a JSON document. Property names are read without regard to case.
+In a configuration section, `Stellaegis:Messaging:Configuration` by default:
+
+```json
+{
+  "Stellaegis": {
+    "Messaging": {
+      "Configuration": {
+        "Transports": {
+          "default": {
+            "Host": "smtp.example.com",
+            "Port": 587,
+            "Security": "StartTls",
+            "Auth": "Basic",
+            "Credentials": { "Username": "relay-user" },
+            "FromPolicy": { "Kind": "DomainAuthorized", "Domains": [ "example.com" ] },
+            "DefaultFrom": { "Address": "noreply@example.com", "Name": "Example" },
+            "EnvelopeFrom": "bounces@example.com",
+            "OnFromMismatch": "Degrade"
+          }
+        },
+        "FromAddresses": [
+          { "Address": "billing@example.com", "Transport": "default", "ReplyTo": "accounts@example.com" }
+        ]
+      }
+    }
+  }
+}
+```
+
+Each field can come from another configuration source. The password, for instance, from an environment
+variable:
+
+```sh
+Stellaegis__Messaging__Configuration__Transports__default__Credentials__Password=…
+```
+
+In a vault, the secret holds the same structure as a JSON document. Property names are read without
+regard to case.
 
 ```json
 {
   "transports": {
     "default": {
       "host": "smtp.example.com",
-      "port": 587,
-      "security": "StartTls",
-      "auth": "Basic",
       "credentials": { "username": "relay-user", "password": "…" },
       "fromPolicy": { "kind": "DomainAuthorized", "domains": [ "example.com" ] },
-      "defaultFrom": { "address": "noreply@example.com", "name": "Example" },
-      "envelopeFrom": "bounces@example.com",
-      "onFromMismatch": "Degrade"
+      "defaultFrom": { "address": "noreply@example.com" }
     }
-  },
-  "fromAddresses": [
-    { "address": "billing@example.com", "transport": "default", "replyTo": "accounts@example.com" }
-  ],
-  "defaultFrom": { "address": "noreply@example.com" }
+  }
 }
 ```
 
-- `transports` names one or more relays. The one named `default` is used unless the message, or the
+- `Transports` names one or more relays. The one named `default` is used unless the message, or the
   sender address, names another.
-- `security` is `None`, `StartTls` (port 587) or `SslOnConnect` (port 465).
-- `auth` is `Basic` (user name and password, or API key), `ClientCert` (a client certificate, given as a
-  base64 PFX in `credentials.certificatePfxBase64`, with `certificatePassword`), or `None` (a relay
+- `Security` is `None`, `StartTls` (port 587, the default) or `SslOnConnect` (port 465).
+- `Auth` is `Basic` (user name and password, or API key), `ClientCert` (a client certificate, given as a
+  base64 PFX in `Credentials.CertificatePfxBase64`, with `CertificatePassword`), or `None` (a relay
   that trusts the source address).
-- `envelopeFrom` is the envelope sender — the address in the SMTP `MAIL FROM` command, which SPF
+- `EnvelopeFrom` is the envelope sender — the address in the SMTP `MAIL FROM` command, which SPF
   checks. It must belong to the relay's domain.
-- `fromAddresses` is optional. An entry binds a sender address to a transport, or gives it a default
+- `FromAddresses` is optional. An entry binds a sender address to a transport, or gives it a default
   `Reply-To`.
+- `DefaultFrom`, next to `Transports`, is the sender of a message that sets none, when its transport
+  has no `DefaultFrom` of its own.
 
 ## The sender-address policy
 
-A relay accepts some `From` addresses and refuses others. The `fromPolicy` of a transport tells the
+A relay accepts some `From` addresses and refuses others. The `FromPolicy` of a transport tells the
 library which, so that a message the relay would refuse is corrected before it leaves, or refused with
 an explicit error.
 
-| `kind` | Accepted `From` | When the `From` is not accepted |
+| `Kind` | Accepted `From` | When the `From` is not accepted |
 | --- | --- | --- |
-| `DomainAuthorized` | any address in one of `domains` | `onFromMismatch: Degrade` (default): `From` becomes the transport's `defaultFrom`, the display name is kept, and the original address moves to `Reply-To`. `Reject`: the send throws `EmailRejectedException`. In both cases a `Sender` outside the domains is removed |
-| `MailboxBound` | the relay's own mailbox only, `defaultFrom` | `From` becomes the mailbox, and an original address that differs moves to `Reply-To`. `Sender` is always removed |
+| `DomainAuthorized` | any address in one of `Domains` | `OnFromMismatch: Degrade` (default): `From` becomes the transport's `DefaultFrom`, the display name is kept, and the original address moves to `Reply-To`. `Reject`: the send throws `EmailRejectedException`. In both cases a `Sender` outside the domains is removed |
+| `MailboxBound` | the relay's own mailbox only, `DefaultFrom` | `From` becomes the mailbox, and an original address that differs moves to `Reply-To`. `Sender` is always removed |
 | `IpUnrestricted`, or no policy | any address | — |
 
-A message without `From` takes the transport's `defaultFrom`, then the configuration's. Degrading keeps
+A message without `From` takes the transport's `DefaultFrom`, then the configuration's. Degrading keeps
 the send going; rejecting tells the caller at once. Each transport makes that choice for itself.
-Degrading needs a `defaultFrom` to fall back to, and so does `MailboxBound`: without one, the send throws
+Degrading needs a `DefaultFrom` to fall back to, and so does `MailboxBound`: without one, the send throws
 an `InvalidOperationException` that names the transport.
 
 ## Keeping the cached configuration fresh
 
-The configuration of a space is cached after its first read: one hour by default, in a bounded cache
-of `Stellaegis.Caching`. An edit must therefore evict the cached copy to take effect before the hour
-ends.
+A configuration section is read at each send, so it needs no cache: a configuration provider that
+reloads — a JSON file with `reloadOnChange`, for instance — takes effect on the next message.
+
+The vault is read through a cache: one hour by default, in a bounded cache of `Stellaegis.Caching`. An
+edit must therefore evict the cached copy to take effect before the hour ends.
 
 - An edit made through `IMessagingConfigStore` (next section) evicts the cached copy in the process
   that makes it.
@@ -196,26 +254,28 @@ ends.
   A path outside the messaging configuration evicts nothing, so every secret change can be passed on
   without filtering.
 
-Without either, the time-to-live is the only freshness mechanism. Tune it in the `Stellaegis:Messaging`
+Without either, the time-to-live is the only freshness mechanism. Options, in the `Stellaegis:Messaging`
 section:
 
 | Option | Default | Role |
 | --- | --- | --- |
-| `ConfigCacheTtl` | `01:00:00` | how long a configuration stays cached when no eviction comes |
-| `ConfigCacheSizeLimit` | derived from available memory | the number of configurations held |
-| `InheritSharedSpace` | `false` | see *Inheriting the shared configuration* |
+| `InheritSharedSpace` | `false` | see *Inheriting the shared configuration*; applies to both sources |
+| `ConfigCacheTtl` | `01:00:00` | vault only: how long a configuration stays cached when no eviction comes |
+| `ConfigCacheSizeLimit` | derived from available memory | vault only: the number of configurations held |
 
 ## Editing a configuration
 
 `IMessagingConfigStore` reads and writes the configuration of a space for an editing surface, such as an
-administration page. Register it with `AddStellaegisMessagingConfigStore(builder.Configuration)`; it
-needs an `IMutableSecretsProvider`.
+administration page. `Stellaegis.Messaging.Secrets` implements it on the vault: register it with
+`AddStellaegisMessagingConfigStore(builder.Configuration)`; it needs an `IMutableSecretsProvider`.
 
 - `GetAsync` returns the configuration with its secrets — passwords, certificates — replaced by
   `MessagingConfigMasking.MaskedSecret`. An editing page never receives a live secret.
 - `SaveAsync` keeps the stored value of every secret field that comes back masked or empty. A page that
   only changes the relay's port therefore keeps the password it never saw.
 - The store reads the space it is given and nothing else: it never falls back to the shared space.
+
+A configuration section has no store: it is deployed with the application, and edited where it lives.
 
 ## The outbox
 
@@ -311,18 +371,20 @@ The library was part of the Stellaegis framework, where it knew tenants. What ch
 - **A space replaces the tenant.** `IEmailSender` has a single `SendAsync(Space, EmailMessage)`; the
   overload that read an ambient tenant context is gone. `IMessageOutbox`, `OutboxEntry`,
   `IEmailConfigResolver` and `IMessagingConfigStore` take or return a `Space`.
+- **The vault is a package of its own.** `AddStellaegisEmail` no longer reads the vault: add
+  `Stellaegis.Messaging.Secrets` and call `AddStellaegisEmailVaultConfiguration`, which replaces
+  `AddStellaegisEmailConfigResolver`. `AddStellaegisMessagingConfigStore` lives there too, and takes the
+  configuration, since the store evicts what it changes.
 - **Vault paths.** `messaging.{tenant}` becomes `messaging.{compartment}`, unchanged for a slug that is a
   valid compartment. `messaging.default` becomes `messaging._shared`: move that secret.
 - **No automatic fallback to the shared configuration.** Set `InheritSharedSpace` to `true` to keep the
   former behaviour.
 - **No subscription.** `UseStellaegisMessagingSecretsBackplane` is gone: subscribe to your secret-change
-  event and call `IMessagingConfigCache.Invalidate`. Paths are `SecretPath` values of
-  `Stellaegis.Secrets`.
+  event and call `IMessagingConfigCache.Invalidate`, in the namespace `Stellaegis.Messaging.Secrets`.
+  Paths are `SecretPath` values of `Stellaegis.Secrets`.
 - **Renamed options.** `SecretCacheTtl` and `SecretCacheSizeLimit` become `ConfigCacheTtl` and
   `ConfigCacheSizeLimit`. A configuration file that keeps the old keys raises no error: they are
   ignored, and the defaults apply.
-- **`AddStellaegisMessagingConfigStore`** takes the configuration, since the store evicts what it
-  changes.
 - **The transport** is `Stellaegis.Messaging.MailKit`, registered by `AddStellaegisMailKitTransport`.
   `AddStellaegisEmailAutoSelect` is gone: register `AddStellaegisEmail` or `AddStellaegisLoggingEmail`
   explicitly.
