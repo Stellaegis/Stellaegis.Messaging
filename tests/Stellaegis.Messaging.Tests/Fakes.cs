@@ -1,4 +1,5 @@
 using Stellaegis.Messaging.Configuration;
+using Stellaegis.Primitives;
 
 namespace Stellaegis.Messaging.Tests;
 
@@ -32,10 +33,10 @@ internal sealed class FakeEmailTransport : IEmailTransport
     }
 }
 
-/// <summary>Returns a fixed configuration (or null = "no relay configured") for any tenant.</summary>
+/// <summary>Returns a fixed configuration (or null = "no relay configured") for any space.</summary>
 internal sealed class FakeEmailConfigResolver(MessagingConfig? config) : IEmailConfigResolver
 {
-    public Task<MessagingConfig?> ResolveAsync(string tenantSlug, CancellationToken cancellationToken = default)
+    public Task<MessagingConfig?> ResolveAsync(Space space, CancellationToken cancellationToken = default)
         => Task.FromResult(config);
 
     /// <summary>A minimal config with a single "default" transport that authorizes any From.</summary>
@@ -52,4 +53,10 @@ internal sealed class FakeEmailConfigResolver(MessagingConfig? config) : IEmailC
             },
         },
     };
+}
+
+internal static class Spaces
+{
+    public static readonly Space Acme = Compartment.Parse("acme");
+    public static readonly Space Globex = Compartment.Parse("globex");
 }

@@ -1,6 +1,6 @@
-using FluentAssertions;
 using Stellaegis.Messaging.Outbox;
-using Xunit;
+using Stellaegis.Primitives;
+using static Stellaegis.Messaging.Tests.Spaces;
 
 namespace Stellaegis.Messaging.Tests;
 
@@ -21,11 +21,11 @@ public sealed class InMemoryMessageOutboxStoreTests
     {
         var store = new InMemoryMessageOutboxStore();
 
-        var first = await store.EnqueueAsync("acme", Message("k1"), "default");
-        var second = await store.EnqueueAsync("acme", Message("k1"), "default");
+        var first = await store.EnqueueAsync(Acme, Message("k1"), "default");
+        var second = await store.EnqueueAsync(Acme, Message("k1"), "default");
 
-        second.Should().Be(first);
-        store.Snapshot().Should().ContainSingle();
+        Assert.Equal(first, second);
+        Assert.Single(store.Snapshot());
     }
 
     [Fact]
@@ -33,90 +33,102 @@ public sealed class InMemoryMessageOutboxStoreTests
     {
         var store = new InMemoryMessageOutboxStore();
 
-        await store.EnqueueAsync("acme", Message(), "default");
-        await store.EnqueueAsync("acme", Message(), "default");
+        await store.EnqueueAsync(Acme, Message(), "default");
+        await store.EnqueueAsync(Acme, Message(), "default");
 
-        store.Snapshot().Should().HaveCount(2);
+        Assert.Equal(2, store.Snapshot().Count);
     }
 
     [Fact]
-    public async Task Same_key_across_tenants_are_independent()
+    public async Task Same_key_across_spaces_are_independent()
     {
         var store = new InMemoryMessageOutboxStore();
 
-        await store.EnqueueAsync("acme", Message("k1"), "default");
-        await store.EnqueueAsync("globex", Message("k1"), "default");
+        await store.EnqueueAsync(Acme, Message("k1"), "default");
+        await store.EnqueueAsync(Globex, Message("k1"), "default");
+        await store.EnqueueAsync(Space.Shared, Message("k1"), "default");
 
-        store.Snapshot().Should().HaveCount(2);
+        Assert.Equal(3, store.Snapshot().Count);
+    }
+
+    [Fact]
+    public async Task Same_key_in_the_shared_space_is_neutralized()
+    {
+        var store = new InMemoryMessageOutboxStore();
+
+        var first = await store.EnqueueAsync(Space.Shared, Message("k1"), "default");
+        var second = await store.EnqueueAsync(Space.Shared, Message("k1"), "default");
+
+        Assert.Equal(first, second);
     }
 
     [Fact]
     public async Task Claim_leases_entries_so_a_second_claim_skips_them()
     {
         var store = new InMemoryMessageOutboxStore();
-        await store.EnqueueAsync("acme", Message(), "default");
+        await store.EnqueueAsync(Acme, Message(), "default");
 
         var first = await store.ClaimDueAsync(10, Lease);
         var second = await store.ClaimDueAsync(10, Lease);
 
-        first.Should().ContainSingle();
-        second.Should().BeEmpty();
+        Assert.Single(first);
+        Assert.Empty(second);
     }
 
     [Fact]
     public async Task Retry_reschedules_in_the_future_and_is_not_claimed_until_due()
     {
         var store = new InMemoryMessageOutboxStore();
-        var id = await store.EnqueueAsync("acme", Message(), "default");
+        var id = await store.EnqueueAsync(Acme, Message(), "default");
         var claimed = await store.ClaimDueAsync(10, Lease);
 
         await store.MarkForRetryAsync(id, DateTimeOffset.UtcNow.AddHours(1), "boom");
 
-        var snap = store.Snapshot().Should().ContainSingle().Subject;
-        snap.Status.Should().Be(OutboxStatus.Pending);
-        snap.Attempts.Should().Be(1);
-        snap.LastError.Should().Be("boom");
-        (await store.ClaimDueAsync(10, Lease)).Should().BeEmpty();
-        claimed.Should().ContainSingle();
+        var snap = Assert.Single(store.Snapshot());
+        Assert.Equal(OutboxStatus.Pending, snap.Status);
+        Assert.Equal(1, snap.Attempts);
+        Assert.Equal("boom", snap.LastError);
+        Assert.Empty(await store.ClaimDueAsync(10, Lease));
+        Assert.Single(claimed);
     }
 
     [Fact]
     public async Task MarkSent_without_retention_removes_the_entry()
     {
         var store = new InMemoryMessageOutboxStore();
-        var id = await store.EnqueueAsync("acme", Message(), "default");
+        var id = await store.EnqueueAsync(Acme, Message(), "default");
 
         await store.MarkSentAsync(id, retainUntil: null);
 
-        store.Snapshot().Should().BeEmpty();
+        Assert.Empty(store.Snapshot());
     }
 
     [Fact]
     public async Task MarkSent_with_retention_keeps_the_entry_as_sent()
     {
         var store = new InMemoryMessageOutboxStore();
-        var id = await store.EnqueueAsync("acme", Message(), "default");
+        var id = await store.EnqueueAsync(Acme, Message(), "default");
 
         await store.MarkSentAsync(id, DateTimeOffset.UtcNow.AddDays(1));
 
-        var snap = store.Snapshot().Should().ContainSingle().Subject;
-        snap.Status.Should().Be(OutboxStatus.Sent);
-        (await store.ClaimDueAsync(10, Lease)).Should().BeEmpty();
+        var snap = Assert.Single(store.Snapshot());
+        Assert.Equal(OutboxStatus.Sent, snap.Status);
+        Assert.Empty(await store.ClaimDueAsync(10, Lease));
     }
 
     [Fact]
     public async Task PurgeExpired_removes_terminal_entries_past_their_deadline_only()
     {
         var store = new InMemoryMessageOutboxStore();
-        var expired = await store.EnqueueAsync("acme", Message(), "default");
-        var kept = await store.EnqueueAsync("acme", Message(), "default");
+        var expired = await store.EnqueueAsync(Acme, Message(), "default");
+        var kept = await store.EnqueueAsync(Acme, Message(), "default");
 
         await store.MarkDeadLetterAsync(expired, DateTimeOffset.UtcNow.AddMinutes(-1), "dead");
         await store.MarkDeadLetterAsync(kept, DateTimeOffset.UtcNow.AddDays(30), "dead");
 
         var removed = await store.PurgeExpiredAsync();
 
-        removed.Should().Be(1);
-        store.Snapshot().Should().ContainSingle().Which.MessageId.Should().Be(kept);
+        Assert.Equal(1, removed);
+        Assert.Equal(kept, Assert.Single(store.Snapshot()).MessageId);
     }
 }

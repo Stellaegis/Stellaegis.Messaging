@@ -1,10 +1,9 @@
-using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Outbox;
-using Xunit;
+using static Stellaegis.Messaging.Tests.Spaces;
 
 namespace Stellaegis.Messaging.Tests;
 
@@ -46,15 +45,15 @@ public sealed class OutboxProcessorTests
     public async Task Enqueued_message_is_delivered_verbatim_and_removed()
     {
         var h = Build(FakeEmailConfigResolver.WithDefaultTransport());
-        await h.Store.EnqueueAsync("acme", Message(), "default");
+        await h.Store.EnqueueAsync(Acme, Message(), "default");
 
         var processed = await h.Processor.ProcessOnceAsync(CancellationToken.None);
 
-        processed.Should().Be(1);
-        h.Transport.Sent.Should().ContainSingle();
-        h.Transport.Sent[0].Subject.Should().Be("Hello");
-        h.Transport.Sent[0].To.Should().ContainSingle().Which.Address.Should().Be("dest@example.test");
-        h.Store.Snapshot().Should().BeEmpty();
+        Assert.Equal(1, processed);
+        var sent = Assert.Single(h.Transport.Sent);
+        Assert.Equal("Hello", sent.Subject);
+        Assert.Equal("dest@example.test", Assert.Single(sent.To).Address);
+        Assert.Empty(h.Store.Snapshot());
     }
 
     [Fact]
@@ -62,17 +61,17 @@ public sealed class OutboxProcessorTests
     {
         var h = Build(FakeEmailConfigResolver.WithDefaultTransport());
         h.Transport.FailuresBeforeSuccess = 1;
-        await h.Store.EnqueueAsync("acme", Message(), "default");
+        await h.Store.EnqueueAsync(Acme, Message(), "default");
 
         await h.Processor.ProcessOnceAsync(CancellationToken.None); // attempt 1 fails → retry
-        var afterFirst = h.Store.Snapshot().Should().ContainSingle().Subject;
-        afterFirst.Status.Should().Be(OutboxStatus.Pending);
-        afterFirst.Attempts.Should().Be(1);
+        var afterFirst = Assert.Single(h.Store.Snapshot());
+        Assert.Equal(OutboxStatus.Pending, afterFirst.Status);
+        Assert.Equal(1, afterFirst.Attempts);
 
         await h.Processor.ProcessOnceAsync(CancellationToken.None); // attempt 2 succeeds
 
-        h.Transport.Sent.Should().ContainSingle();
-        h.Store.Snapshot().Should().BeEmpty();
+        Assert.Single(h.Transport.Sent);
+        Assert.Empty(h.Store.Snapshot());
     }
 
     [Fact]
@@ -80,31 +79,31 @@ public sealed class OutboxProcessorTests
     {
         var h = Build(FakeEmailConfigResolver.WithDefaultTransport(), o => o.MaxAttempts = 3);
         h.Transport.AlwaysFail = true;
-        await h.Store.EnqueueAsync("acme", Message(), "default");
+        await h.Store.EnqueueAsync(Acme, Message(), "default");
 
         for (var i = 0; i < 3; i++)
             await h.Processor.ProcessOnceAsync(CancellationToken.None);
 
-        h.Transport.Attempts.Should().Be(3);
-        var snap = h.Store.Snapshot().Should().ContainSingle().Subject;
-        snap.Status.Should().Be(OutboxStatus.DeadLetter);
-        snap.Attempts.Should().Be(3);
-        snap.LastError.Should().NotBeNullOrEmpty();
+        Assert.Equal(3, h.Transport.Attempts);
+        var snap = Assert.Single(h.Store.Snapshot());
+        Assert.Equal(OutboxStatus.DeadLetter, snap.Status);
+        Assert.Equal(3, snap.Attempts);
+        Assert.False(string.IsNullOrEmpty(snap.LastError));
     }
 
     [Fact]
     public async Task No_relay_at_send_time_is_a_failure_and_never_reaches_the_transport()
     {
         var h = Build(config: null); // resolver returns null = no relay configured
-        await h.Store.EnqueueAsync("acme", Message(), "default");
+        await h.Store.EnqueueAsync(Acme, Message(), "default");
 
         await h.Processor.ProcessOnceAsync(CancellationToken.None);
 
-        h.Transport.Attempts.Should().Be(0);
-        var snap = h.Store.Snapshot().Should().ContainSingle().Subject;
-        snap.Status.Should().Be(OutboxStatus.Pending);
-        snap.Attempts.Should().Be(1);
-        snap.LastError.Should().Contain("relay");
+        Assert.Equal(0, h.Transport.Attempts);
+        var snap = Assert.Single(h.Store.Snapshot());
+        Assert.Equal(OutboxStatus.Pending, snap.Status);
+        Assert.Equal(1, snap.Attempts);
+        Assert.Contains("relay", snap.LastError);
     }
 
     private sealed record Harness(OutboxProcessor Processor, InMemoryMessageOutboxStore Store, FakeEmailTransport Transport);
