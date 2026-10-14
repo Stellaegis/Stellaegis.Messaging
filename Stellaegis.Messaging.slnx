@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Stellaegis.Messaging.MailKit/Stellaegis.Messaging.MailKit.csproj" />
     <Project Path="src/Stellaegis.Messaging/Stellaegis.Messaging.csproj" />
   </Folder>
   <Folder Name="/tests/">

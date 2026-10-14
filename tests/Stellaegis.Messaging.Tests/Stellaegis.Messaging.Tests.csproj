@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Stellaegis.Messaging\Stellaegis.Messaging.csproj" />
+    <ProjectReference Include="..\..\src\Stellaegis.Messaging.MailKit\Stellaegis.Messaging.MailKit.csproj" />
   </ItemGroup>
 
   <ItemGroup>

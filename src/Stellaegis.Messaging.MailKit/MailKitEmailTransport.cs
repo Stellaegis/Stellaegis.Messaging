@@ -4,8 +4,9 @@ using MailKit.Security;
 using Microsoft.Extensions.Logging;
 using MimeKit;
 using Stellaegis.Messaging.Configuration;
+using Stellaegis.Primitives;
 
-namespace Stellaegis.Messaging.Smtp;
+namespace Stellaegis.Messaging.MailKit;
 
 /// <summary>
 /// SMTP implementation of <see cref="IEmailTransport"/> using MailKit.
@@ -18,7 +19,7 @@ namespace Stellaegis.Messaging.Smtp;
 /// On transient failure, up to 2 retries are attempted (1 s, then 2 s). The message From/Reply-To/Sender
 /// are already finalized by the orchestrating <see cref="IEmailSender"/>.
 /// </remarks>
-internal sealed class SmtpEmailTransport(ILogger<SmtpEmailTransport> logger) : IEmailTransport
+internal sealed class MailKitEmailTransport(ILogger<MailKitEmailTransport> logger) : IEmailTransport
 {
     private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
 
@@ -27,8 +28,8 @@ internal sealed class SmtpEmailTransport(ILogger<SmtpEmailTransport> logger) : I
         EmailMessage message,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(transport);
-        ArgumentNullException.ThrowIfNull(message);
+        Guard.NotNull(transport);
+        Guard.NotNull(message);
 
         for (var attempt = 0; ; attempt++)
         {
@@ -90,7 +91,7 @@ internal sealed class SmtpEmailTransport(ILogger<SmtpEmailTransport> logger) : I
         await smtp.DisconnectAsync(quit: true, cancellationToken).ConfigureAwait(false);
     }
 
-    private static MimeMessage BuildMimeMessage(EmailMessage message)
+    internal static MimeMessage BuildMimeMessage(EmailMessage message)
     {
         if (message.From is null)
             throw new InvalidOperationException("EmailMessage has no From address (the sender engine must resolve it).");
@@ -121,7 +122,7 @@ internal sealed class SmtpEmailTransport(ILogger<SmtpEmailTransport> logger) : I
             list.Add(new MailboxAddress(address.Name, address.Address));
     }
 
-    private static SecureSocketOptions MapSecurity(SmtpSecurity security) => security switch
+    internal static SecureSocketOptions MapSecurity(SmtpSecurity security) => security switch
     {
         SmtpSecurity.None => SecureSocketOptions.None,
         SmtpSecurity.StartTls => SecureSocketOptions.StartTls,
@@ -129,7 +130,7 @@ internal sealed class SmtpEmailTransport(ILogger<SmtpEmailTransport> logger) : I
         _ => SecureSocketOptions.StartTls
     };
 
-    private static X509Certificate2? LoadClientCertificate(TransportCredentials? credentials)
+    internal static X509Certificate2? LoadClientCertificate(TransportCredentials? credentials)
     {
         if (string.IsNullOrWhiteSpace(credentials?.CertificatePfxBase64))
             return null;
