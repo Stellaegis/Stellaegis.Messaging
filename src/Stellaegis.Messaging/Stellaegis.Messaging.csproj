@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Stellaegis.Messaging</RootNamespace>
+    <PackageId>Stellaegis.Messaging</PackageId>
+    <Description>Stellaegis messaging core: EmailMessage/IEmailSender contracts, config model, vault config resolver and system templates.</Description>
+    <PackageTags>stellaegis;messaging;email</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Scriban" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Stellaegis.Messaging.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Stellaegis.MultiTenant\Stellaegis.MultiTenant.csproj" />
+    <ProjectReference Include="..\..\caching\Stellaegis.Caching\Stellaegis.Caching.csproj" />
+    <ProjectReference Include="..\..\backplane\Stellaegis.Backplane.Core\Stellaegis.Backplane.Core.csproj" />
+    <ProjectReference Include="..\..\secrets\Stellaegis.Secrets\Stellaegis.Secrets.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates\Defaults\**\*.html" />
+  </ItemGroup>
+
+  <!--
+    Copy system templates to the consuming project's output directory.
+    Developers can customize these files in-place without recompiling.
+    Embedded resources above serve as fallback if files are deleted.
+  -->
+  <ItemGroup>
+    <Content Include="Templates\Defaults\**\*.html"
+             Link="templates/system/%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             Pack="true"
+             PackagePath="contentFiles/any/any/templates/system/" />
+  </ItemGroup>
+
+</Project>
