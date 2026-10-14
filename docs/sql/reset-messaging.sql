@@ -1,13 +1,13 @@
 -- ============================================================================
--- Stellaegis — Reset script for schema: msg (Messaging outbox)
+-- Stellaegis Messaging — Reset script for schema msg (outbox)
 -- ============================================================================
--- WARNING: Destroys ALL data in the msg schema. Irreversible.
--- Intended for development/pre-release reset only.
--- Usage: psql -U stellaegis -d stellaegis_messaging -f reset-messaging.sql
+-- WARNING: deletes every message of the outbox, pending ones included. Irreversible.
+-- For development only.
+-- Usage: psql -d <database> -f reset-messaging.sql
 -- ============================================================================
 
-BEGIN;
+begin;
 
-DELETE FROM msg.outbox;
+delete from msg.outbox;
 
-COMMIT;
+commit;

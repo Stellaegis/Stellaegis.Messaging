@@ -13,11 +13,17 @@
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Npgsql" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Stellaegis.Messaging\Stellaegis.Messaging.csproj" />
     <ProjectReference Include="..\..\src\Stellaegis.Messaging.MailKit\Stellaegis.Messaging.MailKit.csproj" />
+    <ProjectReference Include="..\..\src\Stellaegis.Messaging.PostgreSQL\Stellaegis.Messaging.PostgreSQL.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\sql\stellaegis_messaging.sql" Link="sql\stellaegis_messaging.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

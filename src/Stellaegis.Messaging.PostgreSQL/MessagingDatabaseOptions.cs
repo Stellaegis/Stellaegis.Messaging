@@ -2,63 +2,55 @@ namespace Stellaegis.Messaging.PostgreSQL;
 
 /// <summary>
 /// Connection and at-rest encryption options for the PostgreSQL outbox store.
-/// The payload passphrase follows the <b>same principle as the vault master key</b>
-/// (<c>Stellaegis:Secrets</c>): it is provided by process configuration, never fetched from another
-/// store — so the outbox never reaches outside for its own key.
+/// The payload passphrase follows the same principle as the master key of a vault: it is provided by
+/// process configuration, never fetched from another store — so the outbox never reaches outside for
+/// its own key.
 /// </summary>
 /// <remarks>
-/// Key rotation uses the vault's modulo-2 double-buffer: two named slots (1 and 2) alternate as the
-/// active slot; each <c>msg.outbox</c> row records the slot that encrypted it (<c>key_slot</c>), so both
-/// keys stay valid during the overlap window without re-encrypting in-flight rows.
-/// <para>
-/// Configuration (rotation-ready):
+/// The simple form holds one passphrase:
 /// <code>
-/// Stellaegis:Messaging:Database:ConnectionStringName = messaging_db
-/// Stellaegis:Messaging:Database:ActiveKeySlot        = 1
-/// Stellaegis:Messaging:Database:Keys:1               = passphrase-for-slot-1
-/// Stellaegis:Messaging:Database:Keys:2               = passphrase-for-slot-2  (empty until first rotation)
+/// Stellaegis:Messaging:Database:ConnectionString = Host=...;Database=...
+/// Stellaegis:Messaging:Database:Passphrase       = passphrase
 /// </code>
-/// </para>
-/// <para>
-/// Legacy (single passphrase, treated as slot 1):
+/// The form that rotates holds two slots. New rows are encrypted with the active slot; each row records
+/// the slot that encrypted it (<c>key_slot</c>), so both passphrases stay valid while they overlap:
 /// <code>
-/// Stellaegis:Messaging:Database:Passphrase = passphrase
+/// Stellaegis:Messaging:Database:ActiveKeySlot = 1
+/// Stellaegis:Messaging:Database:Keys:1        = passphrase-for-slot-1
+/// Stellaegis:Messaging:Database:Keys:2        = passphrase-for-slot-2  (empty until the first rotation)
 /// </code>
-/// </para>
+/// Source passphrases from environment variables or user secrets, never from a committed file.
 /// </remarks>
 public sealed class MessagingDatabaseOptions
 {
-    /// <summary>Configuration section name in <c>appsettings</c>.</summary>
+    /// <summary>Configuration section name.</summary>
     public const string SectionName = "Stellaegis:Messaging:Database";
 
     /// <summary>
-    /// Name of the connection string in the root <c>ConnectionStrings</c> section (e.g. "messaging_db").
-    /// Preferred over <see cref="ConnectionString"/>.
+    /// Connection string of the database holding the <c>msg</c> schema. To set it from code — a
+    /// connection string kept elsewhere, for instance — use
+    /// <c>services.PostConfigure&lt;MessagingDatabaseOptions&gt;(o =&gt; ...)</c>.
     /// </summary>
-    public string? ConnectionStringName { get; set; }
-
-    /// <summary>Legacy inline connection string. Prefer <see cref="ConnectionStringName"/>.</summary>
-    public string? ConnectionString { get; set; }
+    public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>
-    /// Named passphrases indexed by slot number (1 or 2).
+    /// Passphrases indexed by slot number (1 or 2), for rotation.
     /// Maps to <c>Stellaegis:Messaging:Database:Keys:1</c> and <c>:Keys:2</c>.
     /// </summary>
     public Dictionary<int, string> Keys { get; set; } = [];
 
-    /// <summary>Slot currently used to encrypt new rows (1 or 2). Switch it to activate a rotation.</summary>
+    /// <summary>Slot used to encrypt new rows (1 or 2). Switch it to activate a rotation.</summary>
     public int ActiveKeySlot { get; set; } = 1;
 
     /// <summary>
-    /// Legacy single passphrase — treated as <c>Keys[1]</c> when <see cref="Keys"/> is empty.
-    /// Source it from an environment variable / user secret, never hardcode it.
+    /// Single passphrase, the simple form: used as slot 1 when <see cref="Keys"/> has no slot 1.
     /// </summary>
-    public string Passphrase { get; set; } = "";
+    public string Passphrase { get; set; } = string.Empty;
 
     /// <summary>
     /// Returns the passphrase for the given slot. The active slot throws when not configured (startup
     /// guard); a non-active slot returns empty when not configured — safe as long as no row uses it
-    /// (the SQL <c>CASE</c> never calls <c>pgp_sym_decrypt</c> with an unused slot's value).
+    /// (the SQL <c>case</c> never calls <c>pgp_sym_decrypt</c> with an unused slot's value).
     /// </summary>
     internal string GetPassphrase(int slot)
     {
@@ -73,9 +65,9 @@ public sealed class MessagingDatabaseOptions
 
         throw new InvalidOperationException(
             $"No passphrase configured for active key slot {slot}. " +
-            $"Set Stellaegis:Messaging:Database:Keys:{slot} or Stellaegis:Messaging:Database:Passphrase.");
+            $"Set {SectionName}:Keys:{slot} or {SectionName}:Passphrase.");
     }
 
-    /// <summary>Passphrase for the currently active slot — used to encrypt all new rows.</summary>
+    /// <summary>Passphrase of the active slot — used to encrypt all new rows.</summary>
     internal string ActivePassphrase => GetPassphrase(ActiveKeySlot);
 }

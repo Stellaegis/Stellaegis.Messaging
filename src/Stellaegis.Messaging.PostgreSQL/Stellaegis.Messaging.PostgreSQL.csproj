@@ -4,15 +4,25 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Stellaegis.Messaging.PostgreSQL</RootNamespace>
     <PackageId>Stellaegis.Messaging.PostgreSQL</PackageId>
-    <Description>PostgreSQL-backed encrypted outbox, retry worker and purge for Stellaegis.Messaging.</Description>
+    <Description>Durable outbox for Stellaegis.Messaging on PostgreSQL: payload encrypted at rest with pgcrypto, two-slot key rotation, idempotent enqueue.</Description>
     <PackageTags>stellaegis;messaging;email;outbox;postgresql</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Dapper" />
     <PackageReference Include="Npgsql" />
+    <PackageReference Include="Stellaegis.Primitives.Data" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Stellaegis.Messaging\Stellaegis.Messaging.csproj" />
-    <ProjectReference Include="..\..\database\Stellaegis.Database\Stellaegis.Database.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Stellaegis.Messaging.Tests" />
   </ItemGroup>
 
 </Project>
