@@ -5,7 +5,6 @@ using Microsoft.Extensions.Options;
 using Stellaegis.Caching;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Outbox;
-using Stellaegis.Messaging.Templates;
 
 namespace Stellaegis.Messaging;
 
@@ -100,22 +99,6 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddStellaegisLoggingEmail(this IServiceCollection services)
     {
         services.TryAddTransient<IEmailSender, LoggingEmailSender>();
-        return services;
-    }
-
-    /// <summary>
-    /// Registers system template infrastructure: <see cref="ISystemTemplateProvider"/>
-    /// and <see cref="ITemplateEmailSender"/>.
-    /// Reads configuration from the <c>Stellaegis:Messaging:Templates</c> section.
-    /// </summary>
-    public static IServiceCollection AddStellaegisSystemTemplates(
-        this IServiceCollection services,
-        IConfiguration configuration,
-        string sectionName = SystemTemplateOptions.SectionName)
-    {
-        services.Configure<SystemTemplateOptions>(configuration.GetSection(sectionName));
-        services.TryAddSingleton<ISystemTemplateProvider, SystemTemplateProvider>();
-        services.TryAddTransient<ITemplateEmailSender, TemplateEmailSender>();
         return services;
     }
 

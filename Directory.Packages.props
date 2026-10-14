@@ -13,8 +13,6 @@
     <PackageVersion Include="Stellaegis.Caching" Version="1.0.0" />
     <PackageVersion Include="Stellaegis.Primitives" Version="2.0.0" />
     <PackageVersion Include="Stellaegis.Secrets" Version="1.0.2" />
-    <!-- Templates -->
-    <PackageVersion Include="Scriban" Version="7.5.0" />
     <!-- SMTP -->
     <PackageVersion Include="MailKit" Version="4.18.1" />
     <!-- PostgreSQL -->
