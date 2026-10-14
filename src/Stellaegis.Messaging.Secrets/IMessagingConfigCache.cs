@@ -1,6 +1,6 @@
 using Stellaegis.Secrets;
 
-namespace Stellaegis.Messaging;
+namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// Evicts resolved messaging configuration from the cache, so that an edit takes effect on the next send

@@ -4,7 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Stellaegis.Messaging</RootNamespace>
     <PackageId>Stellaegis.Messaging</PackageId>
-    <Description>Stellaegis messaging core: EmailMessage/IEmailSender contracts, configuration per space in a vault, from-policy and a reliable outbox.</Description>
+    <Description>Stellaegis messaging core: EmailMessage/IEmailSender contracts, configuration per space, from-policy and a reliable outbox.</Description>
     <PackageTags>stellaegis;messaging;email</PackageTags>
   </PropertyGroup>
 
@@ -14,9 +14,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
-    <PackageReference Include="Stellaegis.Caching" />
     <PackageReference Include="Stellaegis.Primitives" />
-    <PackageReference Include="Stellaegis.Secrets" />
   </ItemGroup>
 
   <ItemGroup>

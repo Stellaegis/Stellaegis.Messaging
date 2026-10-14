@@ -1,7 +1,7 @@
 using Stellaegis.Primitives;
 using Stellaegis.Secrets;
 
-namespace Stellaegis.Messaging.Configuration;
+namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// Vault paths of the messaging configuration, one per space: <c>messaging.{compartment}</c>, and

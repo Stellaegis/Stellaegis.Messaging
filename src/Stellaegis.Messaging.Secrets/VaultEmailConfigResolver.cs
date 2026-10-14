@@ -5,7 +5,7 @@ using Stellaegis.Messaging.Configuration;
 using Stellaegis.Primitives;
 using Stellaegis.Secrets;
 
-namespace Stellaegis.Messaging;
+namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// Resolves messaging configuration from the secrets vault, with a bounded in-memory cache.
@@ -16,6 +16,7 @@ internal sealed class VaultEmailConfigResolver(
     ISecretsProvider secrets,
     MessagingConfigCache cache,
     IOptions<MessagingOptions> options,
+    IOptions<VaultConfigurationOptions> cacheOptions,
     ILogger<VaultEmailConfigResolver> logger) : IEmailConfigResolver
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -24,6 +25,7 @@ internal sealed class VaultEmailConfigResolver(
     };
 
     private readonly MessagingOptions _options = options.Value;
+    private readonly TimeSpan _ttl = cacheOptions.Value.ConfigCacheTtl;
 
     /// <inheritdoc />
     public async Task<MessagingConfig?> ResolveAsync(Space space, CancellationToken cancellationToken = default)
@@ -49,7 +51,7 @@ internal sealed class VaultEmailConfigResolver(
         if (config is null)
             return null;
 
-        cache.Set(space, config, sources, _options.ConfigCacheTtl);
+        cache.Set(space, config, sources, _ttl);
         return config;
     }
 

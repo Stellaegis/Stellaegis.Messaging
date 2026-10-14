@@ -2,7 +2,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
-using Stellaegis.Caching;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Outbox;
 
@@ -14,48 +13,54 @@ namespace Stellaegis.Messaging;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the vault-backed <see cref="IEmailConfigResolver"/> (one blob per space) and its bounded
-    /// cache, with <see cref="IMessagingConfigCache"/> to evict it. Requires an <c>ISecretsProvider</c>
-    /// to be registered by the host. Reads options from the <c>Stellaegis:Messaging</c> section.
+    /// Registers the email engine: the orchestrating <see cref="IEmailSender"/> that selects the transport
+    /// and applies its from-policy, and the outbox that delivers through the registered
+    /// <see cref="IEmailTransport"/>. Reads <see cref="MessagingOptions"/> from the <c>Stellaegis:Messaging</c>
+    /// section.
     /// </summary>
     /// <remarks>
-    /// Each cached configuration is attached to the vault paths it depends on. Edits made through
-    /// <see cref="IMessagingConfigStore"/> evict in this process; a host that learns of a change made
-    /// elsewhere calls <see cref="IMessagingConfigCache.Invalidate"/>. Without that call, the cache TTL is
-    /// the only freshness mechanism for edits made in another process.
+    /// The host also registers where the configuration comes from — <see cref="AddStellaegisEmailConfiguration"/>
+    /// for a configuration section, or the vault of <c>Stellaegis.Messaging.Secrets</c> — and a transport,
+    /// such as the SMTP transport of <c>Stellaegis.Messaging.MailKit</c>.
     /// </remarks>
-    public static IServiceCollection AddStellaegisEmailConfigResolver(
-        this IServiceCollection services,
-        IConfiguration configuration,
-        string sectionName = MessagingOptions.SectionName)
-    {
-        services.AddMessagingConfigCache(configuration, sectionName);
-        services.TryAddScoped<IEmailConfigResolver, VaultEmailConfigResolver>();
-        return services;
-    }
-
-    /// <summary>
-    /// Registers the production email engine: the vault config resolver (<see cref="IEmailConfigResolver"/>)
-    /// and the orchestrating <see cref="IEmailSender"/> that selects the transport, validates/degrades the
-    /// From, and delegates to the registered <see cref="IEmailTransport"/>.
-    /// The host must also register an <see cref="IEmailTransport"/> (e.g. the SMTP transport) and an
-    /// <c>ISecretsProvider</c>.
-    /// </summary>
     public static IServiceCollection AddStellaegisEmail(
         this IServiceCollection services,
         IConfiguration configuration,
         string sectionName = MessagingOptions.SectionName)
     {
-        services.AddStellaegisEmailConfigResolver(configuration, sectionName);
+        services.Configure<MessagingOptions>(configuration.GetSection(sectionName));
         services.AddStellaegisEmailOutbox(configuration);
         services.TryAddScoped<IEmailSender, MessagingEmailSender>();
         return services;
     }
 
     /// <summary>
+    /// Registers an <see cref="IEmailConfigResolver"/> that reads one <see cref="MessagingConfig"/> from a
+    /// configuration section, <c>Stellaegis:Messaging:Configuration</c> by default. Suited to an application
+    /// with a single relay: each field can come from its own configuration source, a password from an
+    /// environment variable for instance.
+    /// </summary>
+    /// <remarks>
+    /// The section is the configuration of the shared space. A compartment uses it only when
+    /// <see cref="MessagingOptions.InheritSharedSpace"/> is set. The section is read again at each send, so a
+    /// reloaded configuration file takes effect without a restart. An absent section is the "no relay
+    /// configured yet" state: messages are written to the log, never sent.
+    /// </remarks>
+    public static IServiceCollection AddStellaegisEmailConfiguration(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        string sectionName = ConfigurationEmailConfigResolver.SectionName)
+    {
+        services.TryAddSingleton<IEmailConfigResolver>(sp => new ConfigurationEmailConfigResolver(
+            configuration.GetSection(sectionName),
+            sp.GetRequiredService<IOptions<MessagingOptions>>()));
+        return services;
+    }
+
+    /// <summary>
     /// Registers the reliable outbox: the in-memory <see cref="IMessageOutboxStore"/> (a single instance
     /// serving both producers and the worker) and the <see cref="OutboxProcessor"/> background worker.
-    /// Hosts that need durability register the PostgreSQL store afterwards, which replaces the in-memory one.
+    /// Hosts that need durability register the PostgreSQL store, which replaces the in-memory one.
     /// Reads options from <c>Stellaegis:Messaging:Outbox</c>.
     /// </summary>
     /// <remarks>
@@ -78,21 +83,6 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers the vault-backed <see cref="IMessagingConfigStore"/> (masked read / merged write)
-    /// used by editing surfaces. Requires an <c>IMutableSecretsProvider</c>. Reads the cache options from
-    /// the <c>Stellaegis:Messaging</c> section, since the store evicts what it changes.
-    /// </summary>
-    public static IServiceCollection AddStellaegisMessagingConfigStore(
-        this IServiceCollection services,
-        IConfiguration configuration,
-        string sectionName = MessagingOptions.SectionName)
-    {
-        services.AddMessagingConfigCache(configuration, sectionName);
-        services.TryAddScoped<IMessagingConfigStore, VaultMessagingConfigStore>();
-        return services;
-    }
-
-    /// <summary>
     /// Registers a development-only <see cref="IEmailSender"/> that logs email content
     /// to the console instead of sending via SMTP. Do not use in production.
     /// </summary>
@@ -100,28 +90,5 @@ public static class ServiceCollectionExtensions
     {
         services.TryAddTransient<IEmailSender, LoggingEmailSender>();
         return services;
-    }
-
-    // Shared by the resolver and the store, which evicts what it changes. Safe to call twice: the bounded
-    // cache keeps its first registration, and the singletons are added once.
-    private static void AddMessagingConfigCache(
-        this IServiceCollection services,
-        IConfiguration configuration,
-        string sectionName)
-    {
-        services.Configure<MessagingOptions>(configuration.GetSection(sectionName));
-
-        services.AddStellaegisBoundedCache(MessagingOptions.ConfigCacheKey, sp =>
-        {
-            var options = sp.GetRequiredService<IOptions<MessagingOptions>>().Value;
-            return new BoundedCacheOptions
-            {
-                SizeLimit = options.ConfigCacheSizeLimit,
-                Expiration = options.ConfigCacheTtl,
-            };
-        });
-
-        services.TryAddSingleton<MessagingConfigCache>();
-        services.TryAddSingleton<IMessagingConfigCache>(sp => sp.GetRequiredService<MessagingConfigCache>());
     }
 }

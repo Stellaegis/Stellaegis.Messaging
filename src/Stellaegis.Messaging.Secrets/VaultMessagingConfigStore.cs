@@ -4,7 +4,7 @@ using Stellaegis.Messaging.Configuration;
 using Stellaegis.Primitives;
 using Stellaegis.Secrets;
 
-namespace Stellaegis.Messaging;
+namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// Vault-backed <see cref="IMessagingConfigStore"/>. Reads/writes the single blob of a space

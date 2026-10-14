@@ -11,8 +11,9 @@ namespace Stellaegis.Messaging;
 /// secret and cannot accidentally overwrite one it never saw.
 /// </summary>
 /// <remarks>
-/// Each space has its own configuration; the store never falls back to the shared space. Saving or
-/// deleting evicts the cached configuration in this process.
+/// Each space has its own configuration; the store never falls back to the shared space. An
+/// implementation whose resolver caches evicts what it saves or deletes. Implemented on a vault by
+/// <c>Stellaegis.Messaging.Secrets</c>.
 /// </remarks>
 public interface IMessagingConfigStore
 {

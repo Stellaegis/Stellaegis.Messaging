@@ -20,6 +20,7 @@
     <ProjectReference Include="..\..\src\Stellaegis.Messaging\Stellaegis.Messaging.csproj" />
     <ProjectReference Include="..\..\src\Stellaegis.Messaging.MailKit\Stellaegis.Messaging.MailKit.csproj" />
     <ProjectReference Include="..\..\src\Stellaegis.Messaging.PostgreSQL\Stellaegis.Messaging.PostgreSQL.csproj" />
+    <ProjectReference Include="..\..\src\Stellaegis.Messaging.Secrets\Stellaegis.Messaging.Secrets.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Stellaegis.Messaging.Configuration;
+using Stellaegis.Messaging.Secrets;
 using Stellaegis.Primitives;
 using Stellaegis.Secrets;
 using static Stellaegis.Messaging.Tests.Spaces;
@@ -36,7 +37,7 @@ public sealed class VaultConfigurationTests
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<ISecretsProvider>(vault);
         services.AddSingleton<IMutableSecretsProvider>(vault);
-        services.AddStellaegisEmailConfigResolver(configuration);
+        services.AddStellaegisEmailVaultConfiguration(configuration);
         services.AddStellaegisMessagingConfigStore(configuration);
         return (services.BuildServiceProvider(), vault);
     }

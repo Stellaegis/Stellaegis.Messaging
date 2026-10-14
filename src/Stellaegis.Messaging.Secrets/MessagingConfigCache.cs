@@ -5,14 +5,14 @@ using Stellaegis.Messaging.Configuration;
 using Stellaegis.Primitives;
 using Stellaegis.Secrets;
 
-namespace Stellaegis.Messaging;
+namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// The bounded cache of resolved configurations, keyed by space. Each entry is attached to the vault paths
 /// it depends on, so that invalidating a path evicts it.
 /// </summary>
 internal sealed class MessagingConfigCache(
-    [FromKeyedServices(MessagingOptions.ConfigCacheKey)] BoundedCache cache) : IMessagingConfigCache
+    [FromKeyedServices(VaultConfigurationOptions.ConfigCacheKey)] BoundedCache cache) : IMessagingConfigCache
 {
     private readonly CacheSegmentInvalidator _segments = new();
 
