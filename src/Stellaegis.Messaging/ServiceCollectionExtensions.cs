@@ -1,11 +1,10 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
-using Stellaegis.Primitives;
-using Stellaegis.Primitives.DependencyInjection;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Outbox;
+using Stellaegis.Primitives;
+using Stellaegis.Primitives.DependencyInjection;
 
 namespace Stellaegis.Messaging;
 
@@ -17,8 +16,7 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers the email engine: the orchestrating <see cref="IEmailSender"/> that selects the transport
     /// and applies its from-policy, and the outbox that delivers through the registered
-    /// <see cref="IEmailTransport"/>. Reads <see cref="MessagingOptions"/> from the <c>Stellaegis:Messaging</c>
-    /// section.
+    /// <see cref="IEmailTransport"/>.
     /// </summary>
     /// <remarks>
     /// Declares <see cref="MessagingModule"/> with compartments: the application declares a frame with compartments,
@@ -27,13 +25,10 @@ public static class ServiceCollectionExtensions
     /// for a configuration section, or the vault of <c>Stellaegis.Messaging.Secrets</c> — and a transport,
     /// such as the SMTP transport of <c>Stellaegis.Messaging.MailKit</c>.
     /// </remarks>
-    public static IServiceCollection AddStellaegisEmail(
-        this IServiceCollection services,
-        IConfiguration configuration,
-        string sectionName = MessagingOptions.SectionName)
+    public static IServiceCollection AddStellaegisEmail(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddStellaegisModule(ModuleDeclaration.Compartmented<MessagingModule>());
-        services.Configure<MessagingOptions>(configuration.GetSection(sectionName));
+        services.AddStellaegisModule(
+            ModuleDeclaration.Compartmented<MessagingModule>().WithCapability(MessagingModule.InheritSharedSpace));
         services.AddStellaegisEmailOutbox(configuration);
         services.TryAddScoped<IEmailSender, MessagingEmailSender>();
         return services;
@@ -47,7 +42,7 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// The section is the configuration of the shared space. A compartment uses it only when
-    /// <see cref="MessagingOptions.InheritSharedSpace"/> is set. The section is read again at each send, so a
+    /// <see cref="MessagingModule.InheritSharedSpace"/> is turned on. The section is read again at each send, so a
     /// reloaded configuration file takes effect without a restart. An absent section is the "no relay
     /// configured yet" state: messages are written to the log, never sent.
     /// </remarks>
@@ -58,7 +53,7 @@ public static class ServiceCollectionExtensions
     {
         services.TryAddSingleton<IEmailConfigResolver>(sp => new ConfigurationEmailConfigResolver(
             configuration.GetSection(sectionName),
-            sp.GetRequiredService<IOptions<MessagingOptions>>()));
+            sp.InheritsSharedSpace()));
         return services;
     }
 
@@ -86,6 +81,13 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<OutboxProcessor>();
         return services;
     }
+
+    /// <summary>
+    /// Whether the application turned on <see cref="MessagingModule.InheritSharedSpace"/>. Read from the module's
+    /// declaration, which <see cref="AddStellaegisEmail"/> registers.
+    /// </summary>
+    internal static bool InheritsSharedSpace(this IServiceProvider services)
+        => services.GetStellaegisModule<MessagingModule>()?.Parameters.Contains(MessagingModule.InheritSharedSpace) == true;
 
     /// <summary>
     /// Registers a development-only <see cref="IEmailSender"/> that logs email content

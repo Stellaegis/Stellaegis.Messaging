@@ -11,7 +11,7 @@ namespace Stellaegis.Messaging;
 /// <remarks>
 /// Implemented on a configuration section (<c>AddStellaegisEmailConfiguration</c>) and on a vault
 /// (<c>Stellaegis.Messaging.Secrets</c>). A compartment without a configuration of its own falls back to
-/// the shared space only when <see cref="MessagingOptions.InheritSharedSpace"/> is set.
+/// the shared space only when <see cref="MessagingModule.InheritSharedSpace"/> is turned on.
 /// </remarks>
 public interface IEmailConfigResolver
 {

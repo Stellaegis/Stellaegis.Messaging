@@ -10,12 +10,12 @@ namespace Stellaegis.Messaging.Secrets;
 /// <summary>
 /// Resolves messaging configuration from the secrets vault, with a bounded in-memory cache.
 /// Reads the single blob of the space and, for a compartment that has none, the shared space's blob
-/// when <see cref="MessagingOptions.InheritSharedSpace"/> is set.
+/// when <see cref="MessagingModule.InheritSharedSpace"/> is turned on.
 /// </summary>
 internal sealed class VaultEmailConfigResolver(
     ISecretsProvider secrets,
     MessagingConfigCache cache,
-    IOptions<MessagingOptions> options,
+    bool inheritSharedSpace,
     IOptions<VaultConfigurationOptions> cacheOptions,
     ILogger<VaultEmailConfigResolver> logger) : IEmailConfigResolver
 {
@@ -24,7 +24,6 @@ internal sealed class VaultEmailConfigResolver(
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly MessagingOptions _options = options.Value;
     private readonly TimeSpan _ttl = cacheOptions.Value.ConfigCacheTtl;
 
     /// <inheritdoc />
@@ -39,7 +38,7 @@ internal sealed class VaultEmailConfigResolver(
         var config = await LoadAsync(ownPath, cancellationToken).ConfigureAwait(false);
         var sources = new List<SecretPath> { ownPath };
 
-        if (!space.IsShared && _options.InheritSharedSpace)
+        if (!space.IsShared && inheritSharedSpace)
         {
             // The entry depends on both paths whichever one answered: the subtle case is a compartment
             // configuration added later, for an entry currently served by the shared space.

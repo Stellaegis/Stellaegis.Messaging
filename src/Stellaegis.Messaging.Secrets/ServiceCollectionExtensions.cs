@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Stellaegis.Caching;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Secrets;
+using Stellaegis.Primitives.DependencyInjection;
 
 namespace Stellaegis.Messaging;
 
@@ -31,8 +32,10 @@ public static class SecretsServiceCollectionExtensions
         string sectionName = VaultConfigurationOptions.SectionName)
     {
         services.AddMessagingConfigCache(configuration, sectionName);
-        services.Configure<MessagingOptions>(configuration.GetSection(sectionName));
-        services.TryAddScoped<IEmailConfigResolver, VaultEmailConfigResolver>();
+        // The parameter is read from the module's declaration, which AddStellaegisEmail registers.
+        services.TryAddScoped<IEmailConfigResolver>(sp => ActivatorUtilities.CreateInstance<VaultEmailConfigResolver>(
+            sp,
+            sp.GetStellaegisModule<MessagingModule>()?.Parameters.Contains(MessagingModule.InheritSharedSpace) == true));
         return services;
     }
 

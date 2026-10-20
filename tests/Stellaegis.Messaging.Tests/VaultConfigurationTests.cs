@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Secrets;
 using Stellaegis.Primitives;
+using Stellaegis.Primitives.DependencyInjection;
 using Stellaegis.Secrets;
 using static Stellaegis.Messaging.Tests.Spaces;
 
@@ -25,12 +26,7 @@ public sealed class VaultConfigurationTests
 
     private static (ServiceProvider Provider, DictionarySecretsProvider Vault) Build(bool inheritSharedSpace = false)
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Stellaegis:Messaging:InheritSharedSpace"] = inheritSharedSpace.ToString(),
-            })
-            .Build();
+        var configuration = new ConfigurationBuilder().Build();
 
         var vault = new DictionarySecretsProvider();
         var services = new ServiceCollection();
@@ -39,6 +35,9 @@ public sealed class VaultConfigurationTests
         services.AddSingleton<IMutableSecretsProvider>(vault);
         services.AddStellaegisEmailVaultConfiguration(configuration);
         services.AddStellaegisMessagingConfigStore(configuration);
+        services.AddStellaegisEmail(configuration);
+        if (inheritSharedSpace)
+            services.AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace);
         return (services.BuildServiceProvider(), vault);
     }
 
@@ -93,7 +92,7 @@ public sealed class VaultConfigurationTests
     }
 
     [Fact]
-    public async Task Compartment_without_configuration_inherits_when_the_option_is_set()
+    public async Task Compartment_without_configuration_inherits_when_the_parameter_is_on()
     {
         var (provider, vault) = Build(inheritSharedSpace: true);
         vault.Values[SharedPath] = Blob("shared.example.test");

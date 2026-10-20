@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Primitives;
+using Stellaegis.Primitives.DependencyInjection;
 using static Stellaegis.Messaging.Tests.Spaces;
 
 namespace Stellaegis.Messaging.Tests;
@@ -39,16 +40,14 @@ public sealed class ConfigurationEmailConfigResolverTests
         var builder = new ConfigurationBuilder();
         foreach (var source in sources)
             builder.AddInMemoryCollection(source);
-        builder.AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Stellaegis:Messaging:InheritSharedSpace"] = inheritSharedSpace.ToString(),
-        });
         var configuration = builder.Build();
 
         var services = new ServiceCollection();
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddStellaegisEmail(configuration);
         services.AddStellaegisEmailConfiguration(configuration);
+        if (inheritSharedSpace)
+            services.AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace);
         return services.BuildServiceProvider().GetRequiredService<IEmailConfigResolver>();
     }
 

@@ -2,7 +2,7 @@ namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// Cache options of the messaging configuration read from the vault. Bind from the
-/// <c>Stellaegis:Messaging</c> configuration section, next to <c>MessagingOptions</c>.
+/// <c>Stellaegis:Messaging</c> configuration section.
 /// </summary>
 public sealed class VaultConfigurationOptions
 {

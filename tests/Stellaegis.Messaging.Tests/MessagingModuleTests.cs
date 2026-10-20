@@ -22,7 +22,7 @@ public sealed class MessagingModuleTests
     }
 
     [Fact]
-    public void Engine_declares_the_module_with_compartments()
+    public void Engine_declares_the_module_with_compartments_and_its_capability()
     {
         using var provider = Build(ApplicationFrame.SingleCompartment(Owner));
 
@@ -30,6 +30,8 @@ public sealed class MessagingModuleTests
 
         Assert.NotNull(declaration);
         Assert.True(declaration.IsCompartmented);
+        Assert.Contains(MessagingModule.InheritSharedSpace, declaration.Capabilities);
+        Assert.Empty(declaration.Parameters);
     }
 
     [Fact]
