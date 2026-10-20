@@ -23,12 +23,15 @@ public static class ServiceCollectionExtensions
     /// <c>ApplicationFrame.SingleCompartment</c> or <c>ManyCompartments</c>, and calls this method once.
     /// The host also registers where the configuration comes from — <see cref="AddStellaegisEmailConfiguration"/>
     /// for a configuration section, or the vault of <c>Stellaegis.Messaging.Secrets</c> — and a transport,
-    /// such as the SMTP transport of <c>Stellaegis.Messaging.MailKit</c>.
+    /// such as the SMTP transport of <c>Stellaegis.Messaging.MailKit</c>. Without either, the host fails to start,
+    /// naming the registration to add.
     /// </remarks>
     public static IServiceCollection AddStellaegisEmail(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddStellaegisModule(
             ModuleDeclaration.Compartmented<MessagingModule>().WithCapability(MessagingModule.InheritSharedSpace));
+        // Before the outbox worker: hosted services start in registration order.
+        services.AddHostedService<MessagingStartupCheck>();
         services.AddStellaegisEmailOutbox(configuration);
         services.TryAddScoped<IEmailSender, MessagingEmailSender>();
         return services;
