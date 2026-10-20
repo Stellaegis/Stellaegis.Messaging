@@ -15,6 +15,9 @@
 --
 -- Prerequisite: pgcrypto extension (symmetric encryption of msg.outbox.payload
 -- via pgp_sym_encrypt — body and recipients are personal data).
+-- create extension needs a database administrator: run this script under such
+-- an account, or have the extension created beforehand. The application itself
+-- connects under an ordinary role.
 -- ============================================================================
 
 create schema if not exists msg;
@@ -39,6 +42,12 @@ create type msg.outbox_status as enum ('pending', 'sent', 'dead_letter');
 -- entry is written first, then a worker claims it (select ... for update skip
 -- locked on the due rows), attempts the send, and updates the state. Optional
 -- idempotency by (compartment, idempotency_key) neutralizes a replay.
+--
+-- No row-level security rule on this table, unlike the tables of a module's
+-- data: a single worker claims the messages of every compartment, which a rule
+-- on the space would hide from it. The outbox is a buffer for the sending
+-- engine only: read by nothing else, deleted once sent, or purged at the end of
+-- its retention.
 --
 -- outbox_id joins nothing. It exists for the worker's FIFO order and for index
 -- locality on a high-churn table (insert, then delete): created_at holds the
@@ -145,22 +154,3 @@ create unique index ux_outbox_idempotency on msg.outbox (compartment, idempotenc
 
 -- Dead-letter lookup by compartment.
 create index ix_outbox_dead_letter on msg.outbox (compartment) where status = 'dead_letter';
-
--- ============================================================================
--- Schema evolution tracking
--- ============================================================================
-
-create table msg._schema_migrations (
-  version      smallint     not null,
-  script_name  text         not null,
-  checksum     text         not null,
-  applied_at   timestamptz  not null default now(),
-  constraint pk_msg_schema_migrations primary key (version)
-);
-
-create table msg._seed_migrations (
-  version      smallint     not null,
-  description  text         not null,
-  applied_at   timestamptz  not null default now(),
-  constraint pk_msg_seed_migrations primary key (version)
-);
