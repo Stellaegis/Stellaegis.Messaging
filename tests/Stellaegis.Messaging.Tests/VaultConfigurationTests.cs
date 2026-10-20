@@ -13,8 +13,8 @@ namespace Stellaegis.Messaging.Tests;
 
 public sealed class VaultConfigurationTests
 {
-    private static readonly SecretPath SharedPath = SecretPath.Parse("messaging._shared");
-    private static readonly SecretPath AcmePath = SecretPath.Parse("messaging.acme");
+    private static readonly SecretPath SharedPath = SecretPath.Parse("_shared.messaging.configuration");
+    private static readonly SecretPath AcmePath = SecretPath.Parse("acme.messaging.configuration");
 
     private static string Blob(string host, string? password = null) => JsonSerializer.Serialize(new
     {
@@ -136,7 +136,7 @@ public sealed class VaultConfigurationTests
         await ResolveAsync(provider, Acme);
 
         vault.Values[AcmePath] = Blob("new.example.test");
-        provider.GetRequiredService<IMessagingConfigCache>().Invalidate(SecretPath.Parse("tenantDB.primary.postgresql.acme"));
+        provider.GetRequiredService<IMessagingConfigCache>().Invalidate(SecretPath.Parse("acme.secrets.primary"));
 
         Assert.Equal("old.example.test", HostOf(await ResolveAsync(provider, Acme)));
     }

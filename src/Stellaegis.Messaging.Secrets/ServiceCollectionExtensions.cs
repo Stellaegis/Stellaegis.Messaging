@@ -15,8 +15,8 @@ public static class SecretsServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the vault-backed <see cref="IEmailConfigResolver"/> — one secret per space,
-    /// <c>messaging.{compartment}</c> or <c>messaging._shared</c> — and its bounded cache, with
-    /// <see cref="IMessagingConfigCache"/> to evict it. Requires an <c>ISecretsProvider</c>.
+    /// <c>{compartment}.messaging.configuration</c> or <c>_shared.messaging.configuration</c> — and its bounded
+    /// cache, with <see cref="IMessagingConfigCache"/> to evict it. Requires an <c>ISecretsProvider</c>.
     /// Reads options from the <c>Stellaegis:Messaging</c> section.
     /// </summary>
     /// <remarks>
