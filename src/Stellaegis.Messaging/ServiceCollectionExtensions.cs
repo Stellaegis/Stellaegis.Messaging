@@ -2,6 +2,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Stellaegis.Primitives;
+using Stellaegis.Primitives.DependencyInjection;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Outbox;
 
@@ -19,6 +21,8 @@ public static class ServiceCollectionExtensions
     /// section.
     /// </summary>
     /// <remarks>
+    /// Declares <see cref="MessagingModule"/> with compartments: the application declares a frame with compartments,
+    /// <c>ApplicationFrame.SingleCompartment</c> or <c>ManyCompartments</c>, and calls this method once.
     /// The host also registers where the configuration comes from — <see cref="AddStellaegisEmailConfiguration"/>
     /// for a configuration section, or the vault of <c>Stellaegis.Messaging.Secrets</c> — and a transport,
     /// such as the SMTP transport of <c>Stellaegis.Messaging.MailKit</c>.
@@ -28,6 +32,7 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         string sectionName = MessagingOptions.SectionName)
     {
+        services.AddStellaegisModule(ModuleDeclaration.Compartmented<MessagingModule>());
         services.Configure<MessagingOptions>(configuration.GetSection(sectionName));
         services.AddStellaegisEmailOutbox(configuration);
         services.TryAddScoped<IEmailSender, MessagingEmailSender>();

@@ -13,6 +13,7 @@
     <PackageVersion Include="Stellaegis.Caching" Version="1.0.0" />
     <PackageVersion Include="Stellaegis.Primitives" Version="4.3.0" />
     <PackageVersion Include="Stellaegis.Primitives.Data" Version="4.3.0" />
+    <PackageVersion Include="Stellaegis.Primitives.DependencyInjection" Version="4.3.0" />
     <PackageVersion Include="Stellaegis.Secrets" Version="4.0.0" />
     <!-- SMTP -->
     <PackageVersion Include="MailKit" Version="4.18.1" />
