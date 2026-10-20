@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.0.0] — 2026-10-20
 
 The module declares itself to the application that assembles it, as every module of the Stellaegis
 family does from `Stellaegis.Primitives` 4.0, and its vault paths take the shape that
@@ -88,4 +88,5 @@ what changes for code that used the framework's messaging module.
 - `Stellaegis.Messaging.PostgreSQL`: a durable outbox store, messages encrypted at rest with pgcrypto,
   with two key slots for rotation. Requires PostgreSQL 15 or later.
 
+[4.0.0]: https://github.com/Stellaegis/Stellaegis.Messaging/releases/tag/v4.0.0
 [1.0.0]: https://github.com/Stellaegis/Stellaegis.Messaging/releases/tag/v1.0.0
