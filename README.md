@@ -19,7 +19,7 @@ The library is split so that you only take the dependencies of what you use.
 
 | Package | Contents | Depends on |
 | --- | --- | --- |
-| `Stellaegis.Messaging` | `EmailMessage` and `IEmailSender`, the configuration of a space and its reading from a configuration section, the sender-address policy, the outbox and its background worker, an in-memory outbox store | `Stellaegis.Primitives`, Microsoft.Extensions abstractions |
+| `Stellaegis.Messaging` | `EmailMessage` and `IEmailSender`, the configuration of a space and its reading from a configuration section, the sender-address policy, the outbox and its background worker, an in-memory outbox store | `Stellaegis.Primitives`, `Stellaegis.Primitives.DependencyInjection`, Microsoft.Extensions abstractions |
 | `Stellaegis.Messaging.Secrets` | The configuration of each space in a secrets vault, read through a cache, and a store to edit it | `Stellaegis.Secrets`, `Stellaegis.Caching` |
 | `Stellaegis.Messaging.MailKit` | The SMTP transport, on MailKit: Basic or client-certificate authentication, explicit envelope sender | MailKit |
 | `Stellaegis.Messaging.PostgreSQL` | A durable outbox store: messages encrypted at rest with pgcrypto | Npgsql, Dapper, `Stellaegis.Primitives.Data` |
@@ -46,24 +46,47 @@ so a password changed between the two steps is the one used.
 
 ## Getting started
 
-Register the messaging engine, the source of its configuration and a transport. With one relay, the
-configuration comes from your application's configuration:
+The messaging module has compartments, so your application declares a frame with at least one
+compartment. The frame is an `ApplicationFrame` of `Stellaegis.Primitives`, written once in code that
+every host of your application shares; the README of `Stellaegis.Primitives` describes it, in § *The
+application frame*. An application that serves a single organization declares a single compartment,
+named after that organization:
 
 ```csharp
+public static class AppFrame
+{
+    public static readonly Compartment Owner = Compartment.Parse("acme");
+
+    public static readonly ApplicationFrame Value = ApplicationFrame.SingleCompartment(Owner);
+}
+```
+
+Then register the frame, the messaging engine, the source of its configuration and a transport. With one
+relay, the configuration comes from your application's configuration. That configuration describes the
+shared space, so the application also turns on the inheritance of the shared space, for its compartment
+to use it (see *Inheriting the shared configuration*):
+
+```csharp
+builder.Services.AddStellaegisFrame(AppFrame.Value);
 builder.Services.AddStellaegisEmail(builder.Configuration);
+builder.Services.AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace);
 builder.Services.AddStellaegisEmailConfiguration(builder.Configuration);
 builder.Services.AddStellaegisMailKitTransport();
 ```
 
-With a relay per compartment, it comes from a secrets vault, through `Stellaegis.Messaging.Secrets`
-and any provider of `Stellaegis.Secrets`:
+With a relay per compartment, the configuration comes from a secrets vault, through
+`Stellaegis.Messaging.Secrets` and any provider of `Stellaegis.Secrets`:
 
 ```csharp
+builder.Services.AddStellaegisFrame(AppFrame.Value);   // ApplicationFrame.ManyCompartments(), for instance
 builder.Services.AddDatabaseSecretsProvider(builder.Configuration);
 builder.Services.AddStellaegisEmail(builder.Configuration);
 builder.Services.AddStellaegisEmailVaultConfiguration(builder.Configuration);
 builder.Services.AddStellaegisMailKitTransport();
 ```
+
+Call `AddStellaegisEmail` once: it declares the module to your application, and a module declared twice
+is refused.
 
 | | Configuration section | Vault |
 | --- | --- | --- |
@@ -77,6 +100,19 @@ builder.Services.AddStellaegisMailKitTransport();
 .NET host (`WebApplication`, `Host.CreateApplicationBuilder`, or a worker service). By default the
 outbox is kept in memory: messages waiting for a retry are lost if the process stops. For a durable
 outbox, add the PostgreSQL store (see *The PostgreSQL outbox*).
+
+The host refuses to start when the assembly does not hold, and the error names what to change:
+
+- without a source of configuration, the error names `AddStellaegisEmailConfiguration` and
+  `AddStellaegisEmailVaultConfiguration`;
+- without a transport, it names `AddStellaegisMailKitTransport`;
+- in an application whose frame has no compartment, the validation of the frame by
+  `Stellaegis.Primitives` refuses the messaging module. An ASP.NET Core host runs that validation by
+  itself; a host without ASP.NET Core calls `services.ValidateStellaegisModules()` once its services are
+  built.
+
+Without these checks, a missing source or transport would only show at the first send, and the outbox
+worker would fail at each of its cycles.
 
 Then send:
 
@@ -93,8 +129,9 @@ public sealed class InvitationMailer(IEmailSender email)
 }
 ```
 
-A `Compartment` converts to a `Space` implicitly. For mail that belongs to no compartment, or in an
-application without compartments, pass `Space.Shared`.
+A `Compartment` converts to a `Space` implicitly. An application with a single compartment passes it,
+`AppFrame.Owner`, to every send. `Space.Shared` is for mail that belongs to no compartment, in an
+application with several.
 
 ### During development
 
@@ -113,12 +150,13 @@ The library partitions its configuration and its outbox by **space**, a type of
 your application names — or the shared space, for what belongs to no compartment.
 
 A configuration section describes the shared space. In a vault, the configuration of each space is one
-secret:
+secret. A secret path of `Stellaegis.Secrets` has the shape `{space}.{module}.{name}`, so that every
+secret of a compartment lies under one prefix:
 
 | Space | Secret path |
 | --- | --- |
-| compartment `acme` | `messaging.acme` |
-| shared space | `messaging._shared` |
+| compartment `acme` | `acme.messaging.configuration` |
+| shared space | `_shared.messaging.configuration` |
 
 The shared space uses `_shared` because no compartment can be called that: the grammar of a
 compartment allows lowercase letters, digits and hyphens only. A readable name such as `shared` or
@@ -131,12 +169,16 @@ such as Azure Key Vault, needs a name format that translates it.
 ### Inheriting the shared configuration
 
 By default, a compartment without a configuration of its own has no relay: its messages are written to
-the log and not sent. Set `InheritSharedSpace` to let such a compartment use the configuration of the
-shared space instead:
+the log and not sent. Turn on the parameter `MessagingModule.InheritSharedSpace` to let such a
+compartment use the configuration of the shared space instead:
 
-```json
-{ "Stellaegis": { "Messaging": { "InheritSharedSpace": true } } }
+```csharp
+builder.Services.AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace);
 ```
+
+The inheritance is a capability that the module declares, and a choice that your application makes. It is
+written in code, next to the frame, rather than in a configuration file: every host of the application
+then makes the same choice, where a configuration could differ from one host to another.
 
 | | Inheritance off (default) | Inheritance on |
 | --- | --- | --- |
@@ -144,9 +186,9 @@ shared space instead:
 | What it protects | No compartment reaches the shared relay unless you decide so | Every compartment can send from the first day |
 | What it costs | Each compartment needs its configuration before it sends | Mail of a compartment leaves under an identity that is not its own |
 
-A compartment that has its own configuration always uses it, whatever the option says. With a
-configuration section, no compartment has a configuration of its own: set the option if your
-application sends under a compartment rather than `Space.Shared`.
+A compartment that has its own configuration always uses it, whatever the parameter says. With a
+configuration section, no compartment has a configuration of its own: an application that sends under a
+compartment turns the parameter on.
 
 ## The configuration of a space
 
@@ -259,7 +301,6 @@ section:
 
 | Option | Default | Role |
 | --- | --- | --- |
-| `InheritSharedSpace` | `false` | see *Inheriting the shared configuration*; applies to both sources |
 | `ConfigCacheTtl` | `01:00:00` | vault only: how long a configuration stays cached when no eviction comes |
 | `ConfigCacheSizeLimit` | derived from available memory | vault only: the number of configurations held |
 
@@ -325,7 +366,9 @@ builder.Services.AddStellaegisMessagingPostgreSql(builder.Configuration);
 The PostgreSQL store replaces the in-memory one, whichever of the two registrations comes first. Create
 its schema with [`docs/sql/stellaegis_messaging.sql`](https://github.com/Stellaegis/Stellaegis.Messaging/blob/main/docs/sql/stellaegis_messaging.sql), in the
 database of your choice. The script requires PostgreSQL 15 or later and the pgcrypto extension, which it
-creates if it is missing. [`docs/sql/reset-messaging.sql`](https://github.com/Stellaegis/Stellaegis.Messaging/blob/main/docs/sql/reset-messaging.sql) deletes every
+creates if it is missing. Creating an extension needs a database administrator: run the script under
+such an account, or have the extension created beforehand. Your application then connects under an
+ordinary role. [`docs/sql/reset-messaging.sql`](https://github.com/Stellaegis/Stellaegis.Messaging/blob/main/docs/sql/reset-messaging.sql) deletes every
 message, for development only.
 
 ```json
@@ -355,6 +398,9 @@ deleted compartment's messages unreadable by destroying its key. The outbox is a
 though — a sent message is deleted, a dead letter is purged — so there is little such a key would
 protect, and deleting a compartment's rows achieves the same.
 
+For the same reason, the outbox table has no row-level security rule. A single worker sends the messages
+of every compartment, and a rule restricting each connection to one compartment would hide them from it.
+
 To change the passphrase without re-encrypting messages in flight, use the two slots:
 
 ```json
@@ -375,10 +421,11 @@ The library was part of the Stellaegis framework, where it knew tenants. What ch
   `Stellaegis.Messaging.Secrets` and call `AddStellaegisEmailVaultConfiguration`, which replaces
   `AddStellaegisEmailConfigResolver`. `AddStellaegisMessagingConfigStore` lives there too, and takes the
   configuration, since the store evicts what it changes.
-- **Vault paths.** `messaging.{tenant}` becomes `messaging.{compartment}`, unchanged for a slug that is a
-  valid compartment. `messaging.default` becomes `messaging._shared`: move that secret.
-- **No automatic fallback to the shared configuration.** Set `InheritSharedSpace` to `true` to keep the
-  former behaviour.
+- **Vault paths.** `messaging.{tenant}` becomes `{compartment}.messaging.configuration`, for a slug that
+  is a valid compartment. `messaging.default` becomes `_shared.messaging.configuration`. Move those
+  secrets.
+- **No automatic fallback to the shared configuration.** Turn on the parameter
+  `MessagingModule.InheritSharedSpace` to keep the former behaviour.
 - **No subscription.** `UseStellaegisMessagingSecretsBackplane` is gone: subscribe to your secret-change
   event and call `IMessagingConfigCache.Invalidate`, in the namespace `Stellaegis.Messaging.Secrets`.
   Paths are `SecretPath` values of `Stellaegis.Secrets`.
