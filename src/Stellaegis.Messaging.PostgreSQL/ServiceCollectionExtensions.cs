@@ -1,7 +1,13 @@
+using System.Data.Common;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
+using Npgsql;
 using Stellaegis.Messaging.Outbox;
+using Stellaegis.Primitives;
+using Stellaegis.Primitives.Data;
+using Stellaegis.Primitives.Hosting;
 
 namespace Stellaegis.Messaging.PostgreSQL;
 
@@ -11,27 +17,36 @@ namespace Stellaegis.Messaging.PostgreSQL;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the durable PostgreSQL outbox store, replacing the in-memory store wired by
-    /// <c>AddStellaegisEmail</c> whichever order the two are called in. Reads the connection string and
-    /// the payload passphrase from <c>Stellaegis:Messaging:Database</c> (<see cref="MessagingDatabaseOptions"/>).
-    /// The <c>msg</c> schema is created by <c>docs/sql/stellaegis_messaging.sql</c> of the repository.
+    /// Registers the email engine with the durable PostgreSQL outbox, in place of <c>AddStellaegisEmail</c>: a host
+    /// calls one of the two, once. Reads the connection string and the payload passphrases from
+    /// <c>Stellaegis:Messaging:Database</c> (<see cref="MessagingDatabaseOptions"/>), validated when the host
+    /// starts, and declares the outbox's database (<see cref="MessagingDatabase"/>) for its verification at
+    /// startup, which <c>AddStellaegisDatabaseVerification()</c> of <c>Stellaegis.Primitives.Data</c> registers.
     /// </summary>
-    public static IServiceCollection AddStellaegisMessagingPostgreSql(
+    /// <remarks>
+    /// The <c>msg</c> schema is installed by <c>DatabaseLifecycle.InstallAsync([MessagingDatabase.Value], …)</c>,
+    /// under a role that owns it; the application connects under the role of its connection string.
+    /// </remarks>
+    public static IServiceCollection AddStellaegisEmailPostgreSql(
         this IServiceCollection services,
         IConfiguration configuration,
         string sectionName = MessagingDatabaseOptions.SectionName)
     {
-        services.Configure<MessagingDatabaseOptions>(configuration.GetSection(sectionName));
+        Guard.NotNull(services);
+        Guard.NotNull(configuration);
+        Guard.NotWhiteSpace(sectionName);
 
-        // Win over the in-memory outbox regardless of registration order: AddStellaegisEmail only
-        // TryAdds its own.
-        services.RemoveAll<IMessageOutbox>();
-        services.RemoveAll<IMessageOutboxStore>();
+        services.AddStellaegisOptions<MessagingDatabaseOptions>(configuration, sectionName);
+        services.TryAddSingleton<IMessageOutboxStore, PostgreSqlMessageOutboxStore>();
+        services.AddStellaegisModuleDatabase(MessagingDatabase.Value, OpenAsApplicationAsync);
+        return services.AddStellaegisEmailServices(configuration);
+    }
 
-        services.TryAddSingleton<PostgreSqlMessageOutboxStore>();
-        services.AddSingleton<IMessageOutboxStore>(sp => sp.GetRequiredService<PostgreSqlMessageOutboxStore>());
-        services.AddSingleton<IMessageOutbox>(sp => sp.GetRequiredService<IMessageOutboxStore>());
-
-        return services;
+    // The verification opens the outbox as the store does: under the connection string of the options.
+    private static async Task<DbConnection> OpenAsApplicationAsync(IServiceProvider services, CancellationToken cancellationToken)
+    {
+        var connection = new NpgsqlConnection(services.GetRequiredService<IOptions<MessagingDatabaseOptions>>().Value.ConnectionString);
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        return connection;
     }
 }

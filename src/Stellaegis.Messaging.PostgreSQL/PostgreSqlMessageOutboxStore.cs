@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Dapper;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Stellaegis.Messaging.Outbox;
@@ -17,7 +18,9 @@ namespace Stellaegis.Messaging.PostgreSQL;
 /// </summary>
 /// <remarks>
 /// A singleton: it owns its <see cref="NpgsqlDataSource"/>, and each operation opens a pooled
-/// connection of its own, so producers and the worker never share one.
+/// connection of its own, so producers and the worker never share one. It goes through no unit of work of
+/// <c>Stellaegis.Primitives.Data</c> and sets no space on its session: the outbox is a buffer of the sending
+/// engine, whose worker claims the messages of every compartment at once.
 /// </remarks>
 internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsyncDisposable, IDisposable
 {
@@ -25,6 +28,7 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly MessagingDatabaseOptions _options;
+    private readonly ILogger<PostgreSqlMessageOutboxStore> _logger;
 
     static PostgreSqlMessageOutboxStore()
     {
@@ -32,16 +36,17 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
         SnakeCaseTypeMap<ClaimRow>.Register();
     }
 
-    public PostgreSqlMessageOutboxStore(IOptions<MessagingDatabaseOptions> options)
+    /// <summary>Creates the store, validating its options.</summary>
+    /// <exception cref="OptionsValidationException">The options keep the store from working.</exception>
+    public PostgreSqlMessageOutboxStore(IOptions<MessagingDatabaseOptions> options, ILogger<PostgreSqlMessageOutboxStore> logger)
     {
         _options = Guard.NotNull(options).Value;
+        _logger = Guard.NotNull(logger);
 
-        if (string.IsNullOrWhiteSpace(_options.ConnectionString))
-            throw new InvalidOperationException(
-                $"Messaging outbox: no connection string configured ({MessagingDatabaseOptions.SectionName}:ConnectionString).");
-
-        // Fails at construction when the active slot has no passphrase, rather than at the first enqueue.
-        _ = _options.ActivePassphrase;
+        // Registered through AddStellaegisEmailPostgreSql, the options are validated before this point — at host
+        // start, or on first resolution without a host. Built by hand, they are validated here.
+        if (_options.FindError() is { } error)
+            throw new OptionsValidationException(Options.DefaultName, typeof(MessagingDatabaseOptions), [error]);
 
         _dataSource = NpgsqlDataSource.Create(_options.ConnectionString);
     }
@@ -204,6 +209,23 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
         return await connection.ExecuteAsync(new CommandDefinition(
             "delete from msg.outbox where status <> 'pending'::msg.outbox_status and purge_at <= now()",
             cancellationToken: cancellationToken)).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> PurgeCompartmentAsync(Compartment compartment, Actor actor, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(compartment);
+        Guard.NotNull(actor);
+        _logger.LogInformation("Purging the outbox of compartment {Compartment} by {Actor}.", compartment, actor);
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+        var removed = await connection.ExecuteAsync(new CommandDefinition(
+            "delete from msg.outbox where compartment = @compartment",
+            new { compartment = compartment.Value }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+
+        _logger.LogInformation("Purged {Count} messages of compartment {Compartment} by {Actor}.", removed, compartment, actor);
+        return removed;
     }
 
     /// <inheritdoc />

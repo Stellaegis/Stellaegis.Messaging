@@ -1,3 +1,6 @@
+using Stellaegis.Primitives;
+using Stellaegis.Primitives.Hosting;
+
 namespace Stellaegis.Messaging.PostgreSQL;
 
 /// <summary>
@@ -7,28 +10,27 @@ namespace Stellaegis.Messaging.PostgreSQL;
 /// its own key.
 /// </summary>
 /// <remarks>
-/// The simple form holds one passphrase:
+/// The passphrases rotate by slots, the shape of <see cref="KeySlots"/>: two slots, 1 and 2, one active for new
+/// rows, each row recording the slot that encrypted it (<c>key_slot</c>), so both passphrases stay valid while
+/// they overlap.
 /// <code>
 /// Stellaegis:Messaging:Database:ConnectionString = Host=...;Database=...
-/// Stellaegis:Messaging:Database:Passphrase       = passphrase
+/// Stellaegis:Messaging:Database:ActiveKeySlot    = 1
+/// Stellaegis:Messaging:Database:Keys:1           = passphrase-for-slot-1
+/// Stellaegis:Messaging:Database:Keys:2           = passphrase-for-slot-2  (empty until the first rotation)
 /// </code>
-/// The form that rotates holds two slots. New rows are encrypted with the active slot; each row records
-/// the slot that encrypted it (<c>key_slot</c>), so both passphrases stay valid while they overlap:
-/// <code>
-/// Stellaegis:Messaging:Database:ActiveKeySlot = 1
-/// Stellaegis:Messaging:Database:Keys:1        = passphrase-for-slot-1
-/// Stellaegis:Messaging:Database:Keys:2        = passphrase-for-slot-2  (empty until the first rotation)
-/// </code>
-/// Source passphrases from environment variables or user secrets, never from a committed file.
+/// Source passphrases from environment variables or user secrets, never from a committed file. Validated when the
+/// host starts: a missing connection string or an active slot without a passphrase stops the start, naming the
+/// setting.
 /// </remarks>
-public sealed class MessagingDatabaseOptions
+public sealed class MessagingDatabaseOptions : IValidatableOptions
 {
     /// <summary>Configuration section name.</summary>
     public const string SectionName = "Stellaegis:Messaging:Database";
 
     /// <summary>
-    /// Connection string of the database holding the <c>msg</c> schema. To set it from code — a
-    /// connection string kept elsewhere, for instance — use
+    /// Connection string of the database holding the <c>msg</c> schema, under the application's role. To set it
+    /// from code — a connection string kept elsewhere, for instance — use
     /// <c>services.PostConfigure&lt;MessagingDatabaseOptions&gt;(o =&gt; ...)</c>.
     /// </summary>
     public string ConnectionString { get; set; } = string.Empty;
@@ -42,32 +44,19 @@ public sealed class MessagingDatabaseOptions
     /// <summary>Slot used to encrypt new rows (1 or 2). Switch it to activate a rotation.</summary>
     public int ActiveKeySlot { get; set; } = 1;
 
-    /// <summary>
-    /// Single passphrase, the simple form: used as slot 1 when <see cref="Keys"/> has no slot 1.
-    /// </summary>
-    public string Passphrase { get; set; } = string.Empty;
+    /// <summary>The passphrases as slots, the shape every rotating secret of the family shares.</summary>
+    internal KeySlots Slots => new() { Keys = Keys, ActiveKeySlot = ActiveKeySlot };
 
     /// <summary>
-    /// Returns the passphrase for the given slot. The active slot throws when not configured (startup
-    /// guard); a non-active slot returns empty when not configured — safe as long as no row uses it
-    /// (the SQL <c>case</c> never calls <c>pgp_sym_decrypt</c> with an unused slot's value).
+    /// The passphrase of <paramref name="slot"/>: the active slot always has one; the other may be empty as long as
+    /// no row uses it — the SQL <c>case</c> never calls <c>pgp_sym_decrypt</c> with an unused slot's value.
     /// </summary>
-    internal string GetPassphrase(int slot)
-    {
-        if (Keys.TryGetValue(slot, out var key) && !string.IsNullOrWhiteSpace(key))
-            return key;
-
-        if (slot == 1 && !string.IsNullOrWhiteSpace(Passphrase))
-            return Passphrase;
-
-        if (slot != ActiveKeySlot)
-            return string.Empty;
-
-        throw new InvalidOperationException(
-            $"No passphrase configured for active key slot {slot}. " +
-            $"Set {SectionName}:Keys:{slot} or {SectionName}:Passphrase.");
-    }
+    internal string GetPassphrase(int slot) => Slots.KeyOf(slot);
 
     /// <summary>Passphrase of the active slot — used to encrypt all new rows.</summary>
-    internal string ActivePassphrase => GetPassphrase(ActiveKeySlot);
+    internal string ActivePassphrase => Slots.ActiveKey;
+
+    /// <inheritdoc />
+    public string? FindError()
+        => string.IsNullOrWhiteSpace(ConnectionString) ? "ConnectionString is required." : Slots.FindError();
 }

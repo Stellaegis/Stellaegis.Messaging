@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Stellaegis.Messaging.Outbox;
@@ -8,7 +9,8 @@ using static Stellaegis.Messaging.Tests.Spaces;
 namespace Stellaegis.Messaging.Tests;
 
 // The tests of this class share one database and run one after the other; each starts from an empty outbox.
-public sealed class PostgreSqlMessageOutboxStoreTests(PostgreSqlFixture database) : IClassFixture<PostgreSqlFixture>, IAsyncLifetime
+[Collection(PostgreSqlCollection.Name)]
+public sealed class PostgreSqlMessageOutboxStoreTests(PostgreSqlFixture database) : IAsyncLifetime
 {
     private static readonly TimeSpan Lease = TimeSpan.FromMinutes(5);
 
@@ -22,9 +24,9 @@ public sealed class PostgreSqlMessageOutboxStoreTests(PostgreSqlFixture database
 
     private PostgreSqlMessageOutboxStore Store(Action<MessagingDatabaseOptions>? configure = null)
     {
-        var options = new MessagingDatabaseOptions { ConnectionString = database.ConnectionString, Passphrase = "slot-one" };
+        var options = new MessagingDatabaseOptions { ConnectionString = database.ConnectionString, Keys = new() { [1] = "slot-one" } };
         configure?.Invoke(options);
-        return new PostgreSqlMessageOutboxStore(Options.Create(options));
+        return new PostgreSqlMessageOutboxStore(Options.Create(options), NullLogger<PostgreSqlMessageOutboxStore>.Instance);
     }
 
     private static EmailMessage Message(string subject = "Hello", string? idempotencyKey = null) => new()
@@ -97,7 +99,6 @@ public sealed class PostgreSqlMessageOutboxStoreTests(PostgreSqlFixture database
 
         await using var after = Store(o =>
         {
-            o.Passphrase = string.Empty;
             o.Keys = new() { [1] = "slot-one", [2] = "slot-two" };
             o.ActiveKeySlot = 2;
         });
@@ -215,9 +216,30 @@ public sealed class PostgreSqlMessageOutboxStoreTests(PostgreSqlFixture database
     }
 
     [Fact]
+    public async Task Purging_a_compartment_removes_its_rows_whatever_their_status_and_nothing_else()
+    {
+        await using var store = Store();
+        await store.EnqueueAsync(Acme, Message(), null);
+        var dead = await store.EnqueueAsync(Acme, Message(), null);
+        await store.MarkDeadLetterAsync(dead, DateTimeOffset.UtcNow.AddDays(30), "dead");
+        await store.EnqueueAsync(Globex, Message(), null);
+        await store.EnqueueAsync(Space.Shared, Message(), null);
+
+        var removed = await store.PurgeCompartmentAsync(Acme.Compartment!, Actor.Job("purge"));
+        var again = await store.PurgeCompartmentAsync(Acme.Compartment!, Actor.Job("purge"));
+
+        Assert.Equal(2, removed);
+        Assert.Equal(0, again);
+        Assert.Equal(0L, await ScalarAsync("select count(*) from msg.outbox where compartment = 'acme'"));
+        Assert.Equal(2L, await ScalarAsync("select count(*) from msg.outbox"));
+    }
+
+    [Fact]
     public void Store_refuses_to_start_without_a_passphrase_for_the_active_slot()
     {
-        Assert.Throws<InvalidOperationException>(() => Store(o => o.Passphrase = string.Empty));
-        Assert.Throws<InvalidOperationException>(() => Store(o => o.ActiveKeySlot = 2));
+        var missing = Assert.Throws<OptionsValidationException>(() => Store(o => o.Keys.Clear()));
+        Assert.Contains("Keys:1", missing.Message);
+        Assert.Throws<OptionsValidationException>(() => Store(o => o.ActiveKeySlot = 2));
+        Assert.Throws<OptionsValidationException>(() => Store(o => o.ConnectionString = string.Empty));
     }
 }
