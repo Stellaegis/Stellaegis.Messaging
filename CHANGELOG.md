@@ -5,6 +5,97 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] — 2026-10-21
+
+Messaging follows Primitives 5.0.0: the module declares everything the frame is read against — the shared space
+it accepts, the capability that supposes one, its compatibility with an isolation by owner, its database —, a
+configuration section is read against the frame rather than through a parameter, what the sender refuses carries
+a code, the options are validated when the host starts, and a compartment that leaves is purged. The four packages
+move together to 5.0.0, the major version of the family.
+
+### Migrating from 4.0.0
+
+In the order a host follows it:
+
+1. The packages reference `Stellaegis.Primitives` 5.0.0: `Stellaegis.Messaging` takes
+   `Stellaegis.Primitives.Hosting` in place of `Stellaegis.Primitives.DependencyInjection`, `.PostgreSQL` takes
+   `.Data` 5.0.0, `.Secrets` takes `Stellaegis.Secrets` 5.0.0 and `Stellaegis.Caching` 5.0.0. The namespace
+   `Stellaegis.Primitives.DependencyInjection` becomes `Stellaegis.Primitives.Hosting`.
+2. The extension methods of each package live in its namespace: add `using Stellaegis.Messaging.Secrets;`,
+   `using Stellaegis.Messaging.MailKit;` or `using Stellaegis.Messaging.PostgreSQL;` where the registrations are
+   written.
+3. An application with a single compartment configured by a section removes
+   `AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace)`: the section is read as the
+   configuration of that compartment. An application with several compartments that keeps the parameter declares a
+   shared space in its frame, `ApplicationFrame.ManyCompartments().WithSharedSpace()`; without one, the startup
+   fails. Its section describes the shared space, and a compartment may have its own under
+   `Stellaegis:Messaging:Compartments:{compartment}`.
+4. `AddStellaegisEmailConfiguration(configuration, sectionName)` names the parent section, `Stellaegis:Messaging`
+   by default, which holds `Configuration` and `Compartments`. A host that passed the default changes nothing.
+5. A host with the PostgreSQL outbox calls `AddStellaegisEmailPostgreSql(configuration)` in place of both
+   `AddStellaegisEmail` and `AddStellaegisMessagingPostgreSql`, and follows with `AddStellaegisDatabaseVerification()`
+   of `Stellaegis.Primitives.Data`, or `app.Services.VerifyStellaegisDatabasesAsync()` on an ASP.NET Core host.
+6. The outbox is installed by `DatabaseLifecycle.InstallAsync([MessagingDatabase.Value], frame, openAsAdmin,
+   appRole)` rather than by running `docs/sql/stellaegis_messaging.sql`, which leaves the repository. An outbox
+   created by the 4.0.0 script keeps its table but is not recorded as installed: let it drain, drop the `msg`
+   schema and install again — a dead letter to keep is sent again first. The application connects under the role
+   the installation granted.
+7. `Stellaegis:Messaging:Database:Passphrase` becomes `Stellaegis:Messaging:Database:Keys:1`: the passphrases are
+   the `KeySlots` of Primitives, and the simple form is gone. A `Passphrase` key left in a file is ignored, and the
+   host refuses to start, naming `Keys:1`.
+8. A caller catching `InvalidOperationException` from `SendAsync` catches `UserFacingException`, and reads its
+   `Error.Code` among `MessagingErrors`. `EmailRejectedException` is one, with the code `Email.SenderRejected`.
+9. `AddStellaegisEmailOutbox` is gone: the outbox options, `Stellaegis:Messaging:Outbox`, are read by
+   `AddStellaegisEmail` and validated at startup; set one from code with `PostConfigure<MessagingOutboxOptions>`.
+
+### Added
+
+- `IMessageOutboxPurge.PurgeCompartmentAsync(compartment, actor)`: every message of a compartment deleted, pending
+  ones included, replayable, the actor logged. Implemented by both stores, registered beside `IMessageOutbox`.
+- `MessagingDatabase.Value`, the declaration of the outbox's database for `Stellaegis.Primitives.Data`: the
+  schema `msg`, the script `0001_initial.sql` embedded, `pgcrypto` required. `AddStellaegisEmailPostgreSql`
+  registers it for the verification at startup.
+- `MessagingErrors`, the codes of what the sender refuses: `Email.SenderRejected`, `Email.TransportUnknown`,
+  `Email.FromRequired`, `Email.TransportMisconfigured`.
+- `AddStellaegisEmailServices`, the engine without a store, which the registration of a store builds on.
+- `Stellaegis:Messaging:Compartments:{compartment}`: the configuration of one compartment in a section, in an
+  application with several.
+
+### Changed
+
+- **Breaking.** The module is declared accepting the shared space, with `inherit_shared_space` as a capability
+  that supposes one, and with `owner_isolation` as a compatibility declared from the core: no message of the outbox
+  belongs to an actor. An application whose frame declares `WithOwnerIsolation()` now accepts the module.
+- **Breaking.** A configuration section is read against the frame: the configuration of the single compartment in
+  an application with one, of the shared space in an application with several. The parameter no longer applies to
+  the single compartment.
+- **Breaking.** `EmailRejectedException` is a `UserFacingException`; the unknown transport, the missing `From` and
+  the transport that cannot apply its policy are `UserFacingException` too, each with its code, in place of
+  `InvalidOperationException`.
+- **Breaking.** `AddStellaegisMessagingPostgreSql` becomes `AddStellaegisEmailPostgreSql`, which registers the
+  engine with the durable store in place of `AddStellaegisEmail`, with `TryAdd` rather than by removing the
+  in-memory registration: a host calls one of the two.
+- **Breaking.** `MessagingDatabaseOptions` holds its passphrases as the `KeySlots` of Primitives: `Passphrase` is
+  removed, `Keys` and `ActiveKeySlot` stay.
+- **Breaking.** The schema script leaves out `create schema` and `create extension`, which the installation does,
+  and replaces the dead-letter index with an index on the compartment, which the purge uses too.
+- **Breaking.** The extension classes of `.Secrets` and `.MailKit` are `ServiceCollectionExtensions` in their
+  package namespaces, as `.PostgreSQL`'s was.
+- The options of every package implement `IValidatableOptions` and are registered by `AddStellaegisOptions`:
+  `MessagingOutboxOptions`, `MessagingDatabaseOptions`, `VaultConfigurationOptions`. A setting that cannot work
+  fails the host at startup, naming it; the PostgreSQL store refuses the same options when built by hand.
+- The cache of vault configurations is keyed by the space rather than by the path of its secret.
+- The SMTP transport loads a client certificate once per distinct PFX and keeps it, rather than at every send.
+- The development senders write to the log only: the console box is gone, the body is a property of the log entry.
+- `Stellaegis.Messaging.Secrets` catches `SecretNotFoundException` of `Stellaegis.Secrets` 5.0.0, no longer
+  `KeyNotFoundException`, and reads the blob of a space through one reader shared by the resolver and the store.
+- The README documents several workers over one durable outbox, and the purge of a compartment.
+
+### Removed
+
+- **Breaking.** `AddStellaegisEmailOutbox`, `AddStellaegisMessagingPostgreSql`, `MessagingDatabaseOptions.Passphrase`,
+  `docs/sql/stellaegis_messaging.sql` and `docs/sql/reset-messaging.sql`.
+
 ## [4.0.0] — 2026-10-20
 
 The module declares itself to the application that assembles it, as every module of the Stellaegis

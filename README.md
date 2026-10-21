@@ -19,10 +19,10 @@ The library is split so that you only take the dependencies of what you use.
 
 | Package | Contents | Depends on |
 | --- | --- | --- |
-| `Stellaegis.Messaging` | `EmailMessage` and `IEmailSender`, the configuration of a space and its reading from a configuration section, the sender-address policy, the outbox and its background worker, an in-memory outbox store | `Stellaegis.Primitives`, `Stellaegis.Primitives.DependencyInjection`, Microsoft.Extensions abstractions |
+| `Stellaegis.Messaging` | `EmailMessage` and `IEmailSender`, the configuration of a space and its reading from a configuration section, the sender-address policy, the outbox and its background worker, an in-memory outbox store | `Stellaegis.Primitives`, `Stellaegis.Primitives.Hosting`, Microsoft.Extensions abstractions |
 | `Stellaegis.Messaging.Secrets` | The configuration of each space in a secrets vault, read through a cache, and a store to edit it | `Stellaegis.Secrets`, `Stellaegis.Caching` |
 | `Stellaegis.Messaging.MailKit` | The SMTP transport, on MailKit: Basic or client-certificate authentication, explicit envelope sender | MailKit |
-| `Stellaegis.Messaging.PostgreSQL` | A durable outbox store: messages encrypted at rest with pgcrypto | Npgsql, Dapper, `Stellaegis.Primitives.Data` |
+| `Stellaegis.Messaging.PostgreSQL` | A durable outbox store, messages encrypted at rest with pgcrypto, and the declaration of its database for installation and verification | Npgsql, Dapper, `Stellaegis.Primitives.Data` |
 
 The transport package is named after the library it uses, so that another transport — another SMTP
 client, or the HTTP API of an email provider — can be added as a package of its own.
@@ -62,14 +62,13 @@ public static class AppFrame
 ```
 
 Then register the frame, the messaging engine, the source of its configuration and a transport. With one
-relay, the configuration comes from your application's configuration. That configuration describes the
-shared space, so the application also turns on the inheritance of the shared space, for its compartment
-to use it (see *Inheriting the shared configuration*):
+relay, the configuration comes from your application's configuration, read against the frame: in an
+application with a single compartment, the section describes that compartment, and nothing else is to turn
+on:
 
 ```csharp
 builder.Services.AddStellaegisFrame(AppFrame.Value);
 builder.Services.AddStellaegisEmail(builder.Configuration);
-builder.Services.AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace);
 builder.Services.AddStellaegisEmailConfiguration(builder.Configuration);
 builder.Services.AddStellaegisMailKitTransport();
 ```
@@ -85,12 +84,16 @@ builder.Services.AddStellaegisEmailVaultConfiguration(builder.Configuration);
 builder.Services.AddStellaegisMailKitTransport();
 ```
 
-Call `AddStellaegisEmail` once: it declares the module to your application, and a module declared twice
-is refused.
+The extension methods live in the namespace of their package: `Stellaegis.Messaging`,
+`Stellaegis.Messaging.Secrets`, `Stellaegis.Messaging.MailKit`, `Stellaegis.Messaging.PostgreSQL`.
+
+Call `AddStellaegisEmail` once — or `AddStellaegisEmailPostgreSql` in its place, for a durable outbox (see
+*The PostgreSQL outbox*): each declares the module to your application, and a module declared twice is
+refused.
 
 | | Configuration section | Vault |
 | --- | --- | --- |
-| Configurations | one, for the shared space | one per space |
+| Configurations | one for the single compartment; or one for the shared space, and one per compartment that has its own | one per space |
 | Where it lives | `appsettings.json`, environment variables, user secrets, any configuration provider | a secret per space, in the vault of your choice |
 | Editing from the application | no: the configuration is deployed with the application | yes, through `IMessagingConfigStore` |
 | A change takes effect | at the next send, when the configuration provider reloads | at the next send once evicted from the cache (see *Keeping the cached configuration fresh*) |
@@ -107,9 +110,15 @@ The host refuses to start when the assembly does not hold, and the error names w
   `AddStellaegisEmailVaultConfiguration`;
 - without a transport, it names `AddStellaegisMailKitTransport`;
 - in an application whose frame has no compartment, the validation of the frame by
-  `Stellaegis.Primitives` refuses the messaging module. An ASP.NET Core host runs that validation by
-  itself; a host without ASP.NET Core calls `services.ValidateStellaegisModules()` once its services are
-  built.
+  `Stellaegis.Primitives` refuses the messaging module, and so does an inheritance of the shared space
+  turned on in a frame that declares none. An ASP.NET Core host runs that validation by itself; a host
+  without ASP.NET Core registers it with `AddStellaegisValidation()`, or calls
+  `services.ValidateStellaegisModules()` once its services are built;
+- with an option that cannot work — an outbox batch of zero, a database without a passphrase for its
+  active slot —, the validation of the options names the setting. The options of every package are
+  validated this way, by `AddStellaegisOptions` of `Stellaegis.Primitives.Hosting`;
+- with a PostgreSQL outbox whose database is not installed, or installed from another version of the
+  package, the verification of the database names what is missing (see *The PostgreSQL outbox*).
 
 Without these checks, a missing source or transport would only show at the first send, and the outbox
 worker would fail at each of its cycles.
@@ -143,15 +152,19 @@ Two choices are available while no relay exists:
   its messages written to the log, never sent. This keeps the whole pipeline in place, so that adding
   a configuration later is enough to start sending.
 
+Both write to the log, and nowhere else: your host decides where the log goes.
+
 ## Spaces
 
 The library partitions its configuration and its outbox by **space**, a type of
 `Stellaegis.Primitives`. A space is either a compartment — a tenant, an organization, any partition
 your application names — or the shared space, for what belongs to no compartment.
 
-A configuration section describes the shared space. In a vault, the configuration of each space is one
-secret. A secret path of `Stellaegis.Secrets` has the shape `{space}.{module}.{name}`, so that every
-secret of a compartment lies under one prefix:
+A configuration section is read against the frame of your application: in an application with a single
+compartment, it describes that compartment; in an application with several, it describes the shared
+space, and each compartment may have a sub-section of its own (see *The configuration of a space*). In a
+vault, the configuration of each space is one secret. A secret path of `Stellaegis.Secrets` has the shape
+`{space}.{module}.{name}`, so that every secret of a compartment lies under one prefix:
 
 | Space | Secret path |
 | --- | --- |
@@ -173,12 +186,15 @@ the log and not sent. Turn on the parameter `MessagingModule.InheritSharedSpace`
 compartment use the configuration of the shared space instead:
 
 ```csharp
+builder.Services.AddStellaegisFrame(ApplicationFrame.ManyCompartments().WithSharedSpace());
 builder.Services.AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace);
 ```
 
 The inheritance is a capability that the module declares, and a choice that your application makes. It is
 written in code, next to the frame, rather than in a configuration file: every host of the application
-then makes the same choice, where a configuration could differ from one host to another.
+then makes the same choice, where a configuration could differ from one host to another. It supposes a
+shared space, which the frame declares with `WithSharedSpace()`: turned on in an application without one,
+the parameter fails the startup.
 
 | | Inheritance off (default) | Inheritance on |
 | --- | --- | --- |
@@ -186,13 +202,13 @@ then makes the same choice, where a configuration could differ from one host to 
 | What it protects | No compartment reaches the shared relay unless you decide so | Every compartment can send from the first day |
 | What it costs | Each compartment needs its configuration before it sends | Mail of a compartment leaves under an identity that is not its own |
 
-A compartment that has its own configuration always uses it, whatever the parameter says. With a
-configuration section, no compartment has a configuration of its own: an application that sends under a
-compartment turns the parameter on.
+A compartment that has its own configuration always uses it, whatever the parameter says. An application
+with a single compartment needs no inheritance: its configuration section is that compartment's.
 
 ## The configuration of a space
 
-In a configuration section, `Stellaegis:Messaging:Configuration` by default:
+In a configuration section, `Stellaegis:Messaging:Configuration` by default — the configuration of the
+single compartment, or of the shared space in an application with several:
 
 ```json
 {
@@ -226,6 +242,22 @@ variable:
 
 ```sh
 Stellaegis__Messaging__Configuration__Transports__default__Credentials__Password=…
+```
+
+In an application with several compartments, a compartment whose relay is deployed with the application has
+its own sub-section, of the same shape, under `Stellaegis:Messaging:Compartments`:
+
+```json
+{
+  "Stellaegis": {
+    "Messaging": {
+      "Configuration": { "Transports": { "default": { "Host": "smtp.example.com" } } },
+      "Compartments": {
+        "globex": { "Transports": { "default": { "Host": "smtp.globex.com" } } }
+      }
+    }
+  }
+}
 ```
 
 In a vault, the secret holds the same structure as a JSON document. Property names are read without
@@ -271,8 +303,17 @@ an explicit error.
 
 A message without `From` takes the transport's `DefaultFrom`, then the configuration's. Degrading keeps
 the send going; rejecting tells the caller at once. Each transport makes that choice for itself.
-Degrading needs a `DefaultFrom` to fall back to, and so does `MailboxBound`: without one, the send throws
-an `InvalidOperationException` that names the transport.
+
+What `SendAsync` refuses is a `UserFacingException` of `Stellaegis.Primitives`, whose `Error.Code` says
+what to correct; an ASP.NET Core host answers it with the matching status. The codes are the constants of
+`MessagingErrors`:
+
+| Code | Type | When |
+| --- | --- | --- |
+| `Email.SenderRejected` | validation | the `From` is not authorized and the transport rejects (`EmailRejectedException`) |
+| `Email.TransportUnknown` | validation | the message names a transport the configuration does not hold |
+| `Email.FromRequired` | validation | the message has no `From`, and nothing provides a default one |
+| `Email.TransportMisconfigured` | failure | a transport that degrades, or a mailbox-bound one, has no `DefaultFrom` to use |
 
 ## Keeping the cached configuration fresh
 
@@ -330,6 +371,10 @@ The outbox guarantees that a message is delivered at least once, or kept as a de
   network failure does not wait for the outbox.
 - After `MaxAttempts`, the message becomes a dead letter, kept for `DeadLetterTtl`.
 
+Several hosts of one application — the instances behind a load balancer — each run a worker over the same
+durable outbox. A claim leases what it returns, so two workers never deliver the same message at once;
+with the in-memory outbox, each host holds its own messages.
+
 At least once means that a message can be sent twice: when the relay accepted it but the process stopped
 before recording the success. An **idempotency key** on the message protects against the other source of
 duplicates, a caller that retries:
@@ -357,27 +402,52 @@ Options, in the `Stellaegis:Messaging:Outbox` section:
 | `DeadLetterTtl` | `30.00:00:00` | how long a dead letter is kept |
 | `PurgeInterval` | `01:00:00` | how often expired messages are purged |
 
+### When a compartment leaves
+
+`IMessageOutboxPurge.PurgeCompartmentAsync(compartment, actor)` deletes every message of a compartment,
+pending ones included, so that nothing of a compartment that leaves your application is sent afterwards.
+It is a separate interface from `IMessageOutbox`, which every sender takes, so that only the code in charge
+of administration holds it. The purge is replayable, logs the actor when it starts and ends, and returns
+the number of messages deleted.
+
+```csharp
+await outboxPurge.PurgeCompartmentAsync(compartment, Actor.Job("purge"), ct);
+```
+
 ## The PostgreSQL outbox
 
 ```csharp
-builder.Services.AddStellaegisMessagingPostgreSql(builder.Configuration);
+builder.Services.AddStellaegisEmailPostgreSql(builder.Configuration);
+builder.Services.AddStellaegisDatabaseVerification();   // Stellaegis.Primitives.Data
 ```
 
-The PostgreSQL store replaces the in-memory one, whichever of the two registrations comes first. Create
-its schema with [`docs/sql/stellaegis_messaging.sql`](https://github.com/Stellaegis/Stellaegis.Messaging/blob/main/docs/sql/stellaegis_messaging.sql), in the
-database of your choice. The script requires PostgreSQL 15 or later and the pgcrypto extension, which it
-creates if it is missing. Creating an extension needs a database administrator: run the script under
-such an account, or have the extension created beforehand. Your application then connects under an
-ordinary role. [`docs/sql/reset-messaging.sql`](https://github.com/Stellaegis/Stellaegis.Messaging/blob/main/docs/sql/reset-messaging.sql) deletes every
-message, for development only.
+`AddStellaegisEmailPostgreSql` registers the engine with the durable store, in place of
+`AddStellaegisEmail`: call one of the two.
+
+The schema, `msg`, is **installed** by `DatabaseLifecycle.InstallAsync` of `Stellaegis.Primitives.Data`,
+from an installer or a provisioning step, under a role that may create the schema and the pgcrypto
+extension. The package declares its database as `MessagingDatabase.Value`, with its scripts embedded:
+
+```csharp
+// The installer, under a role that owns the schema.
+await DatabaseLifecycle.InstallAsync([MessagingDatabase.Value], AppFrame.Value, OpenAsAdminAsync, "myapp_app");
+```
+
+The installation applies the scripts once, records each in `msg._schema_migrations`, and grants the
+application role, `myapp_app` here, its data rights. It requires PostgreSQL 15 or later. Your application
+connects under that role, and **verifies** the database at every startup: `AddStellaegisDatabaseVerification`
+registers the verification as a hosted service — an ASP.NET Core host, whose server starts first, calls
+`app.Services.VerifyStellaegisDatabasesAsync()` before running instead. A database not installed, or
+installed from another version of the package, fails the start and names what to run. To delete every
+message during development: `delete from msg.outbox`.
 
 ```json
 {
   "Stellaegis": {
     "Messaging": {
       "Database": {
-        "ConnectionString": "Host=localhost;Database=messaging;...",
-        "Passphrase": "set from an environment variable, never committed"
+        "ConnectionString": "Host=localhost;Database=messaging;Username=myapp_app;...",
+        "Keys": { "1": "set from an environment variable, never committed" }
       }
     }
   }
@@ -400,15 +470,20 @@ protect, and deleting a compartment's rows achieves the same.
 
 For the same reason, the outbox table has no row-level security rule. A single worker sends the messages
 of every compartment, and a rule restricting each connection to one compartment would hide them from it.
+The store reaches the table on its own connections, outside the units of work of
+`Stellaegis.Primitives.Data`: the outbox is a buffer of the sending engine, not data of the application.
 
-To change the passphrase without re-encrypting messages in flight, use the two slots:
+The passphrases are the `KeySlots` of `Stellaegis.Primitives`, two slots with one active, as every secret
+of the family that rotates. To change the passphrase without re-encrypting messages in flight, fill the
+other slot and make it active:
 
 ```json
 "Database": { "ActiveKeySlot": 2, "Keys": { "1": "old passphrase", "2": "new passphrase" } }
 ```
 
 New messages use the active slot, and each row records the slot that encrypted it. Remove the old
-passphrase once no row uses its slot: `select count(*) from msg.outbox where key_slot = 1`.
+passphrase once no row uses its slot: `select count(*) from msg.outbox where key_slot = 1`. The host
+refuses to start when the active slot has no passphrase.
 
 ## Migrating from the Stellaegis framework
 
@@ -450,9 +525,11 @@ dotnet test --solution Stellaegis.Messaging.slnx
 
 The PostgreSQL tests need a server. By default they connect to `127.0.0.1` as `postgres`, and create a
 database named `stellaegis_messaging_tests` if it does not exist. Set
-`STELLAEGIS_MESSAGING_TEST_POSTGRES` to another connection string to change that. When no server
-answers, these tests are skipped and the others still run. The publishing workflow runs them against a
-PostgreSQL container and fails when one is skipped.
+`STELLAEGIS_MESSAGING_TEST_POSTGRES` to another connection string to change that. The tests install the
+outbox as an application does, with `DatabaseLifecycle.InstallAsync` under that connection, then run
+under an ordinary role, `stellaegis_messaging_app`, created by the fixture. When no server answers, these
+tests are skipped and the others still run. The publishing workflow runs them against a PostgreSQL
+container and fails when one is skipped.
 
 The SMTP transport is tested up to the message it builds; the tests open no SMTP connection.
 

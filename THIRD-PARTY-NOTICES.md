@@ -11,7 +11,7 @@ alongside them, each under its own license.
 | System.Security.Cryptography.Pkcs | `Stellaegis.Messaging.MailKit` | MIT | <https://github.com/dotnet/runtime> |
 | Npgsql | `Stellaegis.Messaging.PostgreSQL` | PostgreSQL | <https://github.com/npgsql/npgsql> |
 | Dapper | `Stellaegis.Messaging.PostgreSQL` | Apache-2.0 | <https://github.com/DapperLib/Dapper> |
-| Stellaegis.Primitives | all packages | MIT | <https://github.com/Stellaegis/Stellaegis.Primitives> |
+| Stellaegis.Primitives, and Stellaegis.Primitives.Hosting | all packages | MIT | <https://github.com/Stellaegis/Stellaegis.Primitives> |
 | Stellaegis.Primitives.Data | `Stellaegis.Messaging.PostgreSQL` | MIT | <https://github.com/Stellaegis/Stellaegis.Primitives> |
 | Stellaegis.Secrets | `Stellaegis.Messaging.Secrets` | MIT | <https://github.com/Stellaegis/Stellaegis.Secrets> |
 | Stellaegis.Caching | `Stellaegis.Messaging.Secrets` | MIT | <https://github.com/Stellaegis/Stellaegis.Caching> |
