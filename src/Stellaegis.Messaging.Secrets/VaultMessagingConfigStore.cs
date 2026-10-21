@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Primitives;
@@ -16,19 +15,12 @@ internal sealed class VaultMessagingConfigStore(
     MessagingConfigCache cache,
     ILogger<VaultMessagingConfigStore> logger) : IMessagingConfigStore
 {
-    private static readonly JsonSerializerOptions ReadOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
-    private static readonly JsonSerializerOptions WriteOptions = new(JsonSerializerDefaults.Web);
-
     /// <inheritdoc />
     public async Task<MessagingConfig?> GetAsync(Space space, CancellationToken cancellationToken = default)
     {
         var path = MessagingSecretPaths.For(Guard.NotNull(space));
 
-        var config = await LoadRawAsync(path, cancellationToken).ConfigureAwait(false);
+        var config = await MessagingConfigJson.ReadAsync(secrets, path, cancellationToken).ConfigureAwait(false);
         return config is null ? null : MaskSecrets(config);
     }
 
@@ -38,11 +30,10 @@ internal sealed class VaultMessagingConfigStore(
         var path = MessagingSecretPaths.For(Guard.NotNull(space));
         Guard.NotNull(config);
 
-        var existing = await LoadRawAsync(path, cancellationToken).ConfigureAwait(false);
+        var existing = await MessagingConfigJson.ReadAsync(secrets, path, cancellationToken).ConfigureAwait(false);
         var merged = MergeSecrets(config, existing);
 
-        var json = JsonSerializer.Serialize(merged, WriteOptions);
-        await secrets.SetSecretAsync(path, json, cancellationToken).ConfigureAwait(false);
+        await secrets.SetSecretAsync(path, MessagingConfigJson.Write(merged), cancellationToken).ConfigureAwait(false);
         cache.Invalidate(path);
 
         logger.LogInformation("Saved messaging configuration for space {Space}.", space);
@@ -57,29 +48,6 @@ internal sealed class VaultMessagingConfigStore(
         cache.Invalidate(path);
 
         logger.LogInformation("Deleted messaging configuration for space {Space}.", space);
-    }
-
-    private async Task<MessagingConfig?> LoadRawAsync(SecretPath path, CancellationToken cancellationToken)
-    {
-        string json;
-        try
-        {
-            json = await secrets.GetSecretAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (KeyNotFoundException)
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<MessagingConfig>(json, ReadOptions)
-                   ?? throw new InvalidOperationException($"Empty messaging configuration at vault path '{path}'.");
-        }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException($"Invalid messaging configuration JSON at vault path '{path}'.", ex);
-        }
     }
 
     private static MessagingConfig MaskSecrets(MessagingConfig config)

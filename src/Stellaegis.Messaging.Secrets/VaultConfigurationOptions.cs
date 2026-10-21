@@ -1,10 +1,12 @@
+using Stellaegis.Primitives.Hosting;
+
 namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// Cache options of the messaging configuration read from the vault. Bind from the
-/// <c>Stellaegis:Messaging</c> configuration section.
+/// <c>Stellaegis:Messaging</c> configuration section; validated when the host starts.
 /// </summary>
-public sealed class VaultConfigurationOptions
+public sealed class VaultConfigurationOptions : IValidatableOptions
 {
     /// <summary>Configuration section name.</summary>
     public const string SectionName = "Stellaegis:Messaging";
@@ -26,4 +28,14 @@ public sealed class VaultConfigurationOptions
     /// derived from available memory at startup.
     /// </summary>
     public long? ConfigCacheSizeLimit { get; set; }
+
+    /// <inheritdoc />
+    public string? FindError()
+    {
+        if (ConfigCacheTtl <= TimeSpan.Zero)
+            return $"ConfigCacheTtl is {ConfigCacheTtl}: it must be positive.";
+        if (ConfigCacheSizeLimit is { } limit && limit < 1)
+            return $"ConfigCacheSizeLimit is {limit}: it must be positive, or left unset to derive the bound from memory.";
+        return null;
+    }
 }

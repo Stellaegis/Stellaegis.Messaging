@@ -25,5 +25,7 @@ internal sealed class MessagingConfigCache(
     /// <inheritdoc />
     public void Invalidate(SecretPath path) => _segments.Invalidate(Guard.NotNull(path).ToString());
 
-    private static string Key(Space space) => MessagingSecretPaths.For(space).ToString();
+    // The key is the space itself, not the path of its secret: the cache holds one configuration per space,
+    // whichever path answered for it, and the paths are what the entry is attached to.
+    private static string Key(Space space) => space.ToSegment();
 }

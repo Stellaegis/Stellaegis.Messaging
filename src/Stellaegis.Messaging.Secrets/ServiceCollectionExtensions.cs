@@ -3,22 +3,22 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Stellaegis.Caching;
-using Stellaegis.Messaging.Configuration;
-using Stellaegis.Messaging.Secrets;
-using Stellaegis.Primitives.DependencyInjection;
+using Stellaegis.Primitives;
+using Stellaegis.Primitives.Hosting;
 
-namespace Stellaegis.Messaging;
+namespace Stellaegis.Messaging.Secrets;
 
 /// <summary>
 /// Dependency injection helpers for the messaging configuration kept in a vault.
 /// </summary>
-public static class SecretsServiceCollectionExtensions
+public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the vault-backed <see cref="IEmailConfigResolver"/> — one secret per space,
     /// <c>{compartment}.messaging.configuration</c> or <c>_shared.messaging.configuration</c> — and its bounded
     /// cache, with <see cref="IMessagingConfigCache"/> to evict it. Requires an <c>ISecretsProvider</c>.
-    /// Reads options from the <c>Stellaegis:Messaging</c> section.
+    /// Reads options from the <c>Stellaegis:Messaging</c> section (<see cref="VaultConfigurationOptions"/>),
+    /// validated when the host starts.
     /// </summary>
     /// <remarks>
     /// Each cached configuration is attached to the vault paths it depends on. Edits made through
@@ -35,7 +35,7 @@ public static class SecretsServiceCollectionExtensions
         // The parameter is read from the module's declaration, which AddStellaegisEmail registers.
         services.TryAddScoped<IEmailConfigResolver>(sp => ActivatorUtilities.CreateInstance<VaultEmailConfigResolver>(
             sp,
-            sp.GetStellaegisModule<MessagingModule>()?.Parameters.Contains(MessagingModule.InheritSharedSpace) == true));
+            sp.InheritsSharedSpace()));
         return services;
     }
 
@@ -54,14 +54,19 @@ public static class SecretsServiceCollectionExtensions
         return services;
     }
 
-    // Shared by the resolver and the store, which evicts what it changes. Safe to call twice: the bounded
-    // cache keeps its first registration, and the singletons are added once.
+    // Shared by the resolver and the store, which evicts what it changes. Safe to call twice: the options are
+    // bound once more to the same section, the bounded cache keeps its first registration, and the singletons
+    // are added once.
     private static void AddMessagingConfigCache(
         this IServiceCollection services,
         IConfiguration configuration,
         string sectionName)
     {
-        services.Configure<VaultConfigurationOptions>(configuration.GetSection(sectionName));
+        Guard.NotNull(services);
+        Guard.NotNull(configuration);
+        Guard.NotWhiteSpace(sectionName);
+
+        services.AddStellaegisOptions<VaultConfigurationOptions>(configuration, sectionName);
 
         services.AddStellaegisBoundedCache(VaultConfigurationOptions.ConfigCacheKey, sp =>
         {

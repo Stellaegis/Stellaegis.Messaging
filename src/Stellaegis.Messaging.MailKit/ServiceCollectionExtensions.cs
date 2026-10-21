@@ -1,13 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Stellaegis.Messaging.MailKit;
 
-namespace Stellaegis.Messaging;
+namespace Stellaegis.Messaging.MailKit;
 
 /// <summary>
 /// Dependency injection helpers for the MailKit SMTP transport.
 /// </summary>
-public static class MailKitServiceCollectionExtensions
+public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the SMTP <see cref="IEmailTransport"/> on MailKit (Basic and client-certificate

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Stellaegis.Messaging.Configuration;
@@ -19,11 +18,6 @@ internal sealed class VaultEmailConfigResolver(
     IOptions<VaultConfigurationOptions> cacheOptions,
     ILogger<VaultEmailConfigResolver> logger) : IEmailConfigResolver
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private readonly TimeSpan _ttl = cacheOptions.Value.ConfigCacheTtl;
 
     /// <inheritdoc />
@@ -56,29 +50,9 @@ internal sealed class VaultEmailConfigResolver(
 
     private async Task<MessagingConfig?> LoadAsync(SecretPath path, CancellationToken cancellationToken)
     {
-        string secretJson;
-        try
-        {
-            secretJson = await secrets.GetSecretAsync(path, cancellationToken).ConfigureAwait(false);
-        }
-        catch (KeyNotFoundException)
-        {
-            return null;
-        }
-
-        try
-        {
-            var config = JsonSerializer.Deserialize<MessagingConfig>(secretJson, JsonOptions)
-                         ?? throw new InvalidOperationException(
-                             $"Empty messaging configuration at vault path '{path}'.");
-
+        var config = await MessagingConfigJson.ReadAsync(secrets, path, cancellationToken).ConfigureAwait(false);
+        if (config is not null)
             logger.LogDebug("Resolved messaging config from vault: {VaultPath}", path);
-            return config;
-        }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException(
-                $"Invalid messaging configuration JSON at vault path '{path}'.", ex);
-        }
+        return config;
     }
 }

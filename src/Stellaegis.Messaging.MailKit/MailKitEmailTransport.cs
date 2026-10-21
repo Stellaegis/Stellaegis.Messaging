@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.Extensions.Logging;
@@ -17,11 +20,16 @@ namespace Stellaegis.Messaging.MailKit;
 /// <remarks>
 /// A new SMTP connection is opened per send — appropriate for transactional email.
 /// On transient failure, up to 2 retries are attempted (1 s, then 2 s). The message From/Reply-To/Sender
-/// are already finalized by the orchestrating <see cref="IEmailSender"/>.
+/// are already finalized by the orchestrating <see cref="IEmailSender"/>. A client certificate is loaded once
+/// per distinct PFX and kept for the next sends; a rotated certificate is a new entry.
 /// </remarks>
 internal sealed class MailKitEmailTransport(ILogger<MailKitEmailTransport> logger) : IEmailTransport
 {
     private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)];
+
+    // Bounded by clearing: the certificates of a process are few, and a rotation leaves its predecessor behind.
+    private const int MaxCachedCertificates = 64;
+    private readonly ConcurrentDictionary<string, X509Certificate2> _certificates = new(StringComparer.Ordinal);
 
     public async Task SendAsync(
         ResolvedTransport transport,
@@ -60,7 +68,7 @@ internal sealed class MailKitEmailTransport(ILogger<MailKitEmailTransport> logge
 
         using var smtp = new SmtpClient();
 
-        if (transport.Auth == TransportAuth.ClientCert && LoadClientCertificate(transport.Credentials) is { } certificate)
+        if (transport.Auth == TransportAuth.ClientCert && ClientCertificateOf(transport.Credentials) is { } certificate)
             smtp.ClientCertificates = new X509Certificate2Collection(certificate);
 
         await smtp.ConnectAsync(transport.Host, transport.Port, MapSecurity(transport.Security), cancellationToken)
@@ -130,6 +138,21 @@ internal sealed class MailKitEmailTransport(ILogger<MailKitEmailTransport> logge
         _ => SecureSocketOptions.StartTls
     };
 
+    /// <summary>
+    /// The client certificate of <paramref name="credentials"/>, loaded once per distinct PFX and password and
+    /// kept for the next sends, or <see langword="null"/> when the credentials hold none.
+    /// </summary>
+    internal X509Certificate2? ClientCertificateOf(TransportCredentials? credentials)
+    {
+        if (string.IsNullOrWhiteSpace(credentials?.CertificatePfxBase64))
+            return null;
+
+        if (_certificates.Count >= MaxCachedCertificates)
+            _certificates.Clear();
+
+        return _certificates.GetOrAdd(KeyOf(credentials), _ => LoadClientCertificate(credentials)!);
+    }
+
     internal static X509Certificate2? LoadClientCertificate(TransportCredentials? credentials)
     {
         if (string.IsNullOrWhiteSpace(credentials?.CertificatePfxBase64))
@@ -138,4 +161,8 @@ internal sealed class MailKitEmailTransport(ILogger<MailKitEmailTransport> logge
         var raw = Convert.FromBase64String(credentials.CertificatePfxBase64);
         return X509CertificateLoader.LoadPkcs12(raw, credentials.CertificatePassword);
     }
+
+    // A digest of the PFX and its password, so that the cache holds no secret as a key.
+    private static string KeyOf(TransportCredentials credentials)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(credentials.CertificatePfxBase64 + "\0" + credentials.CertificatePassword)));
 }

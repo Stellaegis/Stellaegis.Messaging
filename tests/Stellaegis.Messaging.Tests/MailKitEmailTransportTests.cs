@@ -95,6 +95,24 @@ public sealed class MailKitEmailTransportTests
     {
         Assert.Null(MailKitEmailTransport.LoadClientCertificate(new TransportCredentials { Username = "user" }));
         Assert.Null(MailKitEmailTransport.LoadClientCertificate(null));
+        Assert.Null(new MailKitEmailTransport(NullLogger<MailKitEmailTransport>.Instance).ClientCertificateOf(null));
+    }
+
+    [Fact]
+    public void Client_certificate_is_loaded_once_per_pfx_and_kept()
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest("CN=relay-client", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var issued = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
+        var pfx = Convert.ToBase64String(issued.Export(X509ContentType.Pfx, "pfx-password"));
+        var transport = new MailKitEmailTransport(NullLogger<MailKitEmailTransport>.Instance);
+
+        var first = transport.ClientCertificateOf(new TransportCredentials { CertificatePfxBase64 = pfx, CertificatePassword = "pfx-password" });
+        var again = transport.ClientCertificateOf(new TransportCredentials { CertificatePfxBase64 = pfx, CertificatePassword = "pfx-password" });
+
+        Assert.NotNull(first);
+        Assert.Same(first, again);
+        Assert.Equal(issued.Thumbprint, first.Thumbprint);
     }
 
     [Fact]

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Stellaegis.Messaging.Configuration;
 using Stellaegis.Messaging.Secrets;
 using Stellaegis.Primitives;
-using Stellaegis.Primitives.DependencyInjection;
+using Stellaegis.Primitives.Hosting;
 using Stellaegis.Secrets;
 using static Stellaegis.Messaging.Tests.Spaces;
 
@@ -33,12 +33,15 @@ public sealed class VaultConfigurationTests
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<ISecretsProvider>(vault);
         services.AddSingleton<IMutableSecretsProvider>(vault);
+        services.AddStellaegisFrame(ApplicationFrame.ManyCompartments().WithSharedSpace());
         services.AddStellaegisEmailVaultConfiguration(configuration);
         services.AddStellaegisMessagingConfigStore(configuration);
         services.AddStellaegisEmail(configuration);
         if (inheritSharedSpace)
             services.AddStellaegisModuleParameter<MessagingModule>(MessagingModule.InheritSharedSpace);
-        return (services.BuildServiceProvider(), vault);
+        var provider = services.BuildServiceProvider();
+        provider.ValidateStellaegisModules();
+        return (provider, vault);
     }
 
     private static Task<MessagingConfig?> ResolveAsync(ServiceProvider provider, Space space)
@@ -127,6 +130,25 @@ public sealed class VaultConfigurationTests
         Assert.Equal("acme.example.test", HostOf(await ResolveAsync(provider, Acme)));
     }
 
+    // With inheritance on, an entry depends on both paths whichever one answered: the shared one may come to
+    // serve a compartment whose own configuration is deleted.
+    [Fact]
+    public async Task Invalidating_the_shared_path_evicts_every_entry_that_may_inherit_it()
+    {
+        var (provider, vault) = Build(inheritSharedSpace: true);
+        vault.Values[SharedPath] = Blob("shared.example.test");
+        vault.Values[AcmePath] = Blob("acme.example.test");
+        await ResolveAsync(provider, Acme);
+        await ResolveAsync(provider, Globex);
+
+        vault.Values[SharedPath] = Blob("new-shared.example.test");
+        vault.Values[AcmePath] = Blob("new-acme.example.test");
+        provider.GetRequiredService<IMessagingConfigCache>().Invalidate(SharedPath);
+
+        Assert.Equal("new-shared.example.test", HostOf(await ResolveAsync(provider, Globex)));
+        Assert.Equal("new-acme.example.test", HostOf(await ResolveAsync(provider, Acme)));
+    }
+
     [Fact]
     public async Task Invalidating_another_path_evicts_nothing()
     {
@@ -193,6 +215,23 @@ public sealed class VaultConfigurationTests
         Assert.Null(await Store(provider).GetAsync(Acme));
     }
 
+    [Fact]
+    public async Task A_secret_that_is_not_a_configuration_is_an_error_not_an_absence()
+    {
+        var (provider, vault) = Build();
+        vault.Values[AcmePath] = "not json";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ResolveAsync(provider, Acme));
+    }
+
+    [Fact]
+    public void Cache_options_are_validated()
+    {
+        Assert.Null(new VaultConfigurationOptions().FindError());
+        Assert.Contains("ConfigCacheTtl", new VaultConfigurationOptions { ConfigCacheTtl = TimeSpan.Zero }.FindError());
+        Assert.Contains("ConfigCacheSizeLimit", new VaultConfigurationOptions { ConfigCacheSizeLimit = 0 }.FindError());
+    }
+
     private sealed class DictionarySecretsProvider : IMutableSecretsProvider
     {
         public Dictionary<SecretPath, string> Values { get; } = [];
@@ -200,7 +239,7 @@ public sealed class VaultConfigurationTests
         public Task<string> GetSecretAsync(SecretPath path, CancellationToken cancellationToken = default)
             => Values.TryGetValue(path, out var value)
                 ? Task.FromResult(value)
-                : throw new KeyNotFoundException($"Secret not found: {path}");
+                : throw new SecretNotFoundException(path);
 
         public Task<IReadOnlyDictionary<SecretPath, string>> GetSecretsAsync(
             IEnumerable<SecretPath> paths, CancellationToken cancellationToken = default)
