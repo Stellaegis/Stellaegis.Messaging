@@ -101,9 +101,11 @@ public sealed class MessagingEmailSenderTests
         var (sender, outbox) = Build(Config(
             Transport(FromPolicyKind.DomainAuthorized, FromMismatchBehavior.Reject, "example.test")));
 
-        await Assert.ThrowsAsync<EmailRejectedException>(
+        var exception = await Assert.ThrowsAsync<EmailRejectedException>(
             () => sender.SendAsync(Acme, Message(new EmailAddress("jane@other.test"))));
 
+        Assert.Equal(MessagingErrors.SenderRejected, exception.Error.Code);
+        Assert.Equal(ErrorType.Validation, exception.Type);
         Assert.Empty(outbox.Enqueued);
     }
 
@@ -143,13 +145,39 @@ public sealed class MessagingEmailSenderTests
     }
 
     [Fact]
-    public async Task Unknown_transport_fails_the_send()
+    public async Task Unknown_transport_fails_the_send_with_its_code()
     {
         var (sender, outbox) = Build(Config(Transport(FromPolicyKind.IpUnrestricted)));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<UserFacingException>(
             () => sender.SendAsync(Acme, Message() with { TransportName = "missing" }));
 
+        Assert.Equal(MessagingErrors.TransportUnknown, exception.Error.Code);
+        Assert.Equal(ErrorType.Validation, exception.Type);
+        Assert.Empty(outbox.Enqueued);
+    }
+
+    [Fact]
+    public async Task Message_without_from_and_without_default_fails_with_its_code()
+    {
+        var (sender, outbox) = Build(Config(Transport(FromPolicyKind.IpUnrestricted) with { DefaultFrom = null }));
+
+        var exception = await Assert.ThrowsAsync<UserFacingException>(() => sender.SendAsync(Acme, Message()));
+
+        Assert.Equal(MessagingErrors.FromRequired, exception.Error.Code);
+        Assert.Empty(outbox.Enqueued);
+    }
+
+    [Fact]
+    public async Task Mailbox_bound_transport_without_mailbox_is_a_configuration_fault()
+    {
+        var (sender, outbox) = Build(Config(Transport(FromPolicyKind.MailboxBound) with { DefaultFrom = null }));
+
+        var exception = await Assert.ThrowsAsync<UserFacingException>(
+            () => sender.SendAsync(Acme, Message(new EmailAddress("jane@example.test"))));
+
+        Assert.Equal(MessagingErrors.TransportMisconfigured, exception.Error.Code);
+        Assert.Equal(ErrorType.Failure, exception.Type);
         Assert.Empty(outbox.Enqueued);
     }
 

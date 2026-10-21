@@ -13,6 +13,7 @@
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Npgsql" />
   </ItemGroup>
 
@@ -21,10 +22,6 @@
     <ProjectReference Include="..\..\src\Stellaegis.Messaging.MailKit\Stellaegis.Messaging.MailKit.csproj" />
     <ProjectReference Include="..\..\src\Stellaegis.Messaging.PostgreSQL\Stellaegis.Messaging.PostgreSQL.csproj" />
     <ProjectReference Include="..\..\src\Stellaegis.Messaging.Secrets\Stellaegis.Messaging.Secrets.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="..\..\docs\sql\stellaegis_messaging.sql" Link="sql\stellaegis_messaging.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

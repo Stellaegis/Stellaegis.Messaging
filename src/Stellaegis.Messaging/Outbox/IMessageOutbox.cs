@@ -23,7 +23,7 @@ public interface IMessageOutbox
     /// </summary>
     /// <param name="space">The space whose configuration resolves the transport at send time.</param>
     /// <param name="message">The frozen message to deliver.</param>
-    /// <param name="transportName">The transport name resolved at enqueue time, re-resolved against the vault at send time.</param>
+    /// <param name="transportName">The transport name resolved at enqueue time, re-resolved against the configuration source at send time.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The stable public message id (<c>outbox_unique_id</c>).</returns>
     Task<Guid> EnqueueAsync(
@@ -34,9 +34,32 @@ public interface IMessageOutbox
 }
 
 /// <summary>
+/// Removes every message of a compartment from the outbox — an act of administration on the compartment, when it
+/// leaves the application. Kept apart from <see cref="IMessageOutbox"/>, which every sender takes: only the code in
+/// charge of administration takes this interface.
+/// </summary>
+public interface IMessageOutboxPurge
+{
+    /// <summary>
+    /// Deletes every message of <paramref name="compartment"/>, whatever its status, pending ones included: nothing
+    /// of a compartment that leaves is sent afterwards. The shared space is left untouched.
+    /// </summary>
+    /// <remarks>
+    /// Irreversible. A replayed purge completes an interrupted one, and deletes nothing once nothing is left. No
+    /// event is published: the purge logs <paramref name="actor"/> when it starts and when it ends.
+    /// </remarks>
+    /// <param name="compartment">The compartment whose messages are deleted.</param>
+    /// <param name="actor">Who purges — the administrator, or a task named after itself, such as <c>job:purge</c>.</param>
+    /// <param name="cancellationToken">Cancels the purge; what is deleted stays deleted.</param>
+    /// <returns>The number of messages deleted by this call.</returns>
+    Task<int> PurgeCompartmentAsync(Compartment compartment, Actor actor, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Storage surface of the outbox, driven by the <see cref="OutboxProcessor"/> worker and implemented
-/// per backend (in memory, or PostgreSQL for durable hosts). Extends <see cref="IMessageOutbox"/>
-/// so a single registered instance serves both producers and the worker.
+/// per backend (in memory, or PostgreSQL for durable hosts). Extends <see cref="IMessageOutbox"/> and
+/// <see cref="IMessageOutboxPurge"/> so a single registered instance serves producers, the worker and the
+/// administration.
 /// </summary>
 /// <remarks>
 /// The store owns persistence primitives only; the delivery <i>policy</i> (backoff schedule, attempt
@@ -44,7 +67,7 @@ public interface IMessageOutbox
 /// send: a claimed entry is made invisible for <c>leaseDuration</c>; if the worker crashes mid-send the
 /// lease expires and the entry is retried (at-least-once, the idempotency key neutralizing a duplicate).
 /// </remarks>
-public interface IMessageOutboxStore : IMessageOutbox
+public interface IMessageOutboxStore : IMessageOutbox, IMessageOutboxPurge
 {
     /// <summary>
     /// Claims up to <paramref name="batchSize"/> due pending entries (FIFO), leasing them for
@@ -80,7 +103,7 @@ public interface IMessageOutboxStore : IMessageOutbox
 
 /// <summary>
 /// A claimed, due entry handed to the worker for one delivery attempt. The message is frozen and ready
-/// to send; the transport connection is re-resolved from the vault by the worker.
+/// to send; the transport connection is re-resolved from the configuration source by the worker.
 /// </summary>
 public sealed record OutboxEntry
 {
@@ -93,7 +116,7 @@ public sealed record OutboxEntry
     /// <summary>The frozen message to deliver.</summary>
     public required EmailMessage Message { get; init; }
 
-    /// <summary>Transport name resolved at enqueue time; the worker re-resolves it against the vault.</summary>
+    /// <summary>Transport name resolved at enqueue time; the worker re-resolves it against the configuration source.</summary>
     public string? TransportName { get; init; }
 
     /// <summary>Number of attempts already performed (drives the backoff and the dead-letter decision).</summary>

@@ -14,7 +14,9 @@ namespace Stellaegis.Messaging;
 /// The transport engine owns the transport; the developer owns the message. Config resolution
 /// happens per send, never via static options.
 /// The from-policy is applied here so the message is <i>frozen</i> before it enters the outbox; the
-/// worker sends it verbatim and re-resolves the transport connection at send time.
+/// worker sends it verbatim and re-resolves the transport connection at send time. What the caller can
+/// correct — a transport it names, a From it leaves out, a From the relay refuses — is a
+/// <see cref="UserFacingException"/> with a code of <see cref="MessagingErrors"/>.
 /// </remarks>
 internal sealed class MessagingEmailSender(
     IEmailConfigResolver configResolver,
@@ -45,8 +47,9 @@ internal sealed class MessagingEmailSender(
 
         var transportName = message.TransportName ?? boundEntry?.Transport ?? DefaultTransportName;
         if (!config.Transports.TryGetValue(transportName, out var transportConfig))
-            throw new InvalidOperationException(
-                $"Messaging transport '{transportName}' is not configured for space {space}.");
+            throw new UserFacingException(Error.Validation(
+                MessagingErrors.TransportUnknown,
+                $"Messaging transport '{transportName}' is not configured for space {space}."));
 
         var prepared = PrepareMessage(message, config, transportConfig, transportName, boundEntry, space);
 
@@ -72,9 +75,9 @@ internal sealed class MessagingEmailSender(
             replyTo.Add(new EmailAddress(boundEntry!.ReplyTo!));
 
         var desiredFrom = message.From ?? transportConfig.DefaultFrom ?? config.DefaultFrom
-            ?? throw new InvalidOperationException(
-                $"Message has no From and no defaultFrom is configured " +
-                $"(transport '{transportName}', space {space}).");
+            ?? throw new UserFacingException(Error.Validation(
+                MessagingErrors.FromRequired,
+                $"Message has no From and no defaultFrom is configured (transport '{transportName}', space {space})."));
 
         var policy = transportConfig.FromPolicy;
         var kind = policy?.Kind ?? FromPolicyKind.IpUnrestricted;
@@ -100,9 +103,9 @@ internal sealed class MessagingEmailSender(
                     // Degrade (never break): From ← default authorized address, desired name kept,
                     // real address moved to Reply-To.
                     var fallback = transportConfig.DefaultFrom ?? config.DefaultFrom
-                        ?? throw new InvalidOperationException(
-                            $"Cannot degrade From '{desiredFrom.Address}': transport '{transportName}' " +
-                            "has no defaultFrom to fall back to.");
+                        ?? throw new UserFacingException(Error.Failure(
+                            MessagingErrors.TransportMisconfigured,
+                            $"Cannot degrade From '{desiredFrom.Address}': transport '{transportName}' has no defaultFrom to fall back to."));
                     effectiveFrom = new EmailAddress(fallback.Address, desiredFrom.Name ?? fallback.Name);
                     AddReplyTo(replyTo, desiredFrom);
                     logger.LogWarning(
@@ -116,8 +119,9 @@ internal sealed class MessagingEmailSender(
             case FromPolicyKind.MailboxBound:
                 // From is forced to the connection mailbox; the desired address becomes Reply-To.
                 var mailbox = transportConfig.DefaultFrom
-                    ?? throw new InvalidOperationException(
-                        $"MailboxBound transport '{transportName}' requires a defaultFrom (the mailbox address).");
+                    ?? throw new UserFacingException(Error.Failure(
+                        MessagingErrors.TransportMisconfigured,
+                        $"MailboxBound transport '{transportName}' requires a defaultFrom (the mailbox address)."));
                 if (AddressMatches(mailbox.Address, desiredFrom.Address))
                 {
                     effectiveFrom = desiredFrom;

@@ -15,7 +15,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
     <PackageReference Include="Stellaegis.Primitives" />
-    <PackageReference Include="Stellaegis.Primitives.DependencyInjection" />
+    <PackageReference Include="Stellaegis.Primitives.Hosting" />
   </ItemGroup>
 
   <ItemGroup>

@@ -8,14 +8,16 @@ namespace Stellaegis.Messaging.Outbox;
 
 /// <summary>
 /// Background worker that drains the outbox: it claims due entries, re-resolves the transport against
-/// the vault, delivers via the registered <see cref="IEmailTransport"/>, and applies the retention /
-/// retry / dead-letter policy. Also purges expired terminal entries on an interval.
+/// the configuration source, delivers via the registered <see cref="IEmailTransport"/>, and applies the
+/// retention / retry / dead-letter policy. Also purges expired terminal entries on an interval.
 /// </summary>
 /// <remarks>
 /// Each cycle runs in its own DI scope, so that a scoped store or resolver claims and finalizes on the
 /// same instance; entries are delivered sequentially within the cycle, which a store holding a single
 /// connection requires. The message is sent verbatim (frozen at enqueue); only the transport
-/// connection is late-bound here.
+/// connection is late-bound here. Several hosts of one application each run a worker of their own over
+/// the same durable outbox: a claim leases what it returns, so two workers never deliver the same entry
+/// at once, and the lease expires on a crashed worker.
 /// </remarks>
 public sealed class OutboxProcessor(
     IServiceScopeFactory scopeFactory,

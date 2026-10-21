@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Stellaegis.Primitives;
 
 namespace Stellaegis.Messaging.Outbox;
@@ -12,8 +14,9 @@ namespace Stellaegis.Messaging.Outbox;
 /// PostgreSQL <c>ux_outbox_idempotency</c> unique index over any status): while an entry with a given
 /// (space, key) exists, a re-enqueue returns the existing id. FIFO ordering uses a monotonic sequence.
 /// </remarks>
-internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
+internal sealed class InMemoryMessageOutboxStore(ILogger<InMemoryMessageOutboxStore>? logger = null) : IMessageOutboxStore
 {
+    private readonly ILogger<InMemoryMessageOutboxStore> _logger = logger ?? NullLogger<InMemoryMessageOutboxStore>.Instance;
     private readonly object _gate = new();
     private readonly Dictionary<Guid, Entry> _entries = [];
     private long _sequence;
@@ -148,6 +151,26 @@ internal sealed class InMemoryMessageOutboxStore : IMessageOutboxStore
 
             return Task.FromResult(expired.Count);
         }
+    }
+
+    /// <inheritdoc />
+    public Task<int> PurgeCompartmentAsync(Compartment compartment, Actor actor, CancellationToken cancellationToken = default)
+    {
+        Guard.NotNull(compartment);
+        Guard.NotNull(actor);
+        _logger.LogInformation("Purging the outbox of compartment {Compartment} by {Actor}.", compartment, actor);
+
+        int removed;
+        lock (_gate)
+        {
+            var ids = _entries.Values.Where(e => e.Space.Compartment == compartment).Select(e => e.MessageId).ToList();
+            foreach (var id in ids)
+                _entries.Remove(id);
+            removed = ids.Count;
+        }
+
+        _logger.LogInformation("Purged {Count} messages of compartment {Compartment} by {Actor}.", removed, compartment, actor);
+        return Task.FromResult(removed);
     }
 
     /// <summary>Test-only snapshot of the current entries (see <c>Stellaegis.Messaging.Tests</c>).</summary>

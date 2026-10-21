@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Stellaegis.Primitives;
+using Stellaegis.Primitives.Hosting;
 
 namespace Stellaegis.Messaging.Tests;
 
@@ -13,6 +15,7 @@ public sealed class MessagingStartupCheckTests
         var configuration = new ConfigurationBuilder().Build();
         var services = new ServiceCollection();
         services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        services.AddStellaegisFrame(ApplicationFrame.SingleCompartment("acme"));
         services.AddStellaegisEmail(configuration);
         if (configurationSource)
             services.AddStellaegisEmailConfiguration(configuration);

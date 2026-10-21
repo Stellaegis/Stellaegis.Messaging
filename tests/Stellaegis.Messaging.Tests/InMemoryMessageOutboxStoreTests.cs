@@ -117,6 +117,25 @@ public sealed class InMemoryMessageOutboxStoreTests
     }
 
     [Fact]
+    public async Task Purging_a_compartment_removes_its_entries_whatever_their_status_and_nothing_else()
+    {
+        var store = new InMemoryMessageOutboxStore();
+        var pending = await store.EnqueueAsync(Acme, Message(), "default");
+        var dead = await store.EnqueueAsync(Acme, Message(), "default");
+        await store.MarkDeadLetterAsync(dead, DateTimeOffset.UtcNow.AddDays(30), "dead");
+        await store.EnqueueAsync(Globex, Message(), "default");
+        await store.EnqueueAsync(Space.Shared, Message(), "default");
+
+        var removed = await store.PurgeCompartmentAsync(Acme.Compartment!, Actor.Job("purge"));
+        var again = await store.PurgeCompartmentAsync(Acme.Compartment!, Actor.Job("purge"));
+
+        Assert.Equal(2, removed);
+        Assert.Equal(0, again);
+        Assert.DoesNotContain(store.Snapshot(), e => e.MessageId == pending || e.MessageId == dead);
+        Assert.Equal([Globex, Space.Shared], store.Snapshot().Select(e => e.Space));
+    }
+
+    [Fact]
     public async Task PurgeExpired_removes_terminal_entries_past_their_deadline_only()
     {
         var store = new InMemoryMessageOutboxStore();

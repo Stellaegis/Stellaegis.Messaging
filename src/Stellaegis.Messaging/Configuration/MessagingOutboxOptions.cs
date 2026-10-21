@@ -1,10 +1,13 @@
+using Stellaegis.Primitives.Hosting;
+
 namespace Stellaegis.Messaging.Configuration;
 
 /// <summary>
 /// Tuning for the outbox worker (<c>OutboxProcessor</c>): polling cadence, claim batch, the retry
-/// backoff schedule and the two distinct retention windows. Bind from <c>Stellaegis:Messaging:Outbox</c>.
+/// backoff schedule and the two distinct retention windows. Bound from <c>Stellaegis:Messaging:Outbox</c>, and
+/// validated when the host starts: a cadence of zero or a batch of none fails the start, naming the setting.
 /// </summary>
-public sealed class MessagingOutboxOptions
+public sealed class MessagingOutboxOptions : IValidatableOptions
 {
     /// <summary>Configuration section name.</summary>
     public const string SectionName = "Stellaegis:Messaging:Outbox";
@@ -41,4 +44,28 @@ public sealed class MessagingOutboxOptions
 
     /// <summary>How often the worker purges expired terminal entries. Default 1 hour.</summary>
     public TimeSpan PurgeInterval { get; set; } = TimeSpan.FromHours(1);
+
+    /// <inheritdoc />
+    public string? FindError()
+    {
+        if (PollingInterval <= TimeSpan.Zero)
+            return $"PollingInterval is {PollingInterval}: it must be positive.";
+        if (ClaimBatchSize < 1)
+            return $"ClaimBatchSize is {ClaimBatchSize}: it must be at least 1.";
+        if (LeaseDuration <= TimeSpan.Zero)
+            return $"LeaseDuration is {LeaseDuration}: it must be positive.";
+        if (MaxAttempts < 1)
+            return $"MaxAttempts is {MaxAttempts}: it must be at least 1.";
+        if (RetryBackoffBase < TimeSpan.Zero)
+            return $"RetryBackoffBase is {RetryBackoffBase}: it must be zero or positive.";
+        if (RetryBackoffCap < RetryBackoffBase)
+            return $"RetryBackoffCap is {RetryBackoffCap}, below RetryBackoffBase {RetryBackoffBase}.";
+        if (SentRetention < TimeSpan.Zero)
+            return $"SentRetention is {SentRetention}: it must be zero or positive.";
+        if (DeadLetterTtl <= TimeSpan.Zero)
+            return $"DeadLetterTtl is {DeadLetterTtl}: it must be positive.";
+        if (PurgeInterval <= TimeSpan.Zero)
+            return $"PurgeInterval is {PurgeInterval}: it must be positive.";
+        return null;
+    }
 }
