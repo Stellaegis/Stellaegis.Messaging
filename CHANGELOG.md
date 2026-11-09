@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1] — 2026-11-09
+
+On `Stellaegis.Primitives` 5.6.0, `Stellaegis.Caching` 5.0.1, `Stellaegis.Secrets` 5.0.1, MailKit 4.18.2 and
+Microsoft.Extensions 10.0.14, so that a host taking this module takes the version of Primitives that closes what a
+badly assembled host let through. Nothing changes in the module's code.
+
+### Changed
+
+- **`Stellaegis.Primitives` 5.6.0, `Stellaegis.Caching` 5.0.1, `Stellaegis.Secrets` 5.0.1, MailKit 4.18.2 and
+  Microsoft.Extensions 10.0.14.**
+
+### Updating from 5.0.0
+
+Take the version. A host meets what the startup of Primitives 5.6.0 now refuses, listed with its way out in the
+CHANGELOG of Primitives, § *Updating from 5.5.0* — for the outbox, mostly this: on PostgreSQL, the application
+connects with its own role, never a superuser, a `BYPASSRLS` role nor the owner of the schema of the outbox.
+
 ## [5.0.0] — 2026-10-21
 
 Messaging follows Primitives 5.0.0: the module declares everything the frame is read against — the shared space
