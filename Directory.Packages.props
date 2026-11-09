@@ -4,20 +4,20 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Microsoft.Extensions -->
-    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.13" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.13" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.13" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
-    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.14" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.14" />
     <!-- Stellaegis -->
-    <PackageVersion Include="Stellaegis.Caching" Version="5.0.0" />
-    <PackageVersion Include="Stellaegis.Primitives" Version="5.0.0" />
-    <PackageVersion Include="Stellaegis.Primitives.Data" Version="5.0.0" />
-    <PackageVersion Include="Stellaegis.Primitives.Hosting" Version="5.0.0" />
-    <PackageVersion Include="Stellaegis.Secrets" Version="5.0.0" />
+    <PackageVersion Include="Stellaegis.Caching" Version="5.0.1" />
+    <PackageVersion Include="Stellaegis.Primitives" Version="5.6.0" />
+    <PackageVersion Include="Stellaegis.Primitives.Data" Version="5.6.0" />
+    <PackageVersion Include="Stellaegis.Primitives.Hosting" Version="5.6.0" />
+    <PackageVersion Include="Stellaegis.Secrets" Version="5.0.1" />
     <!-- SMTP -->
     <PackageVersion Include="MailKit" Version="4.18.1" />
-    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
     <!-- PostgreSQL -->
     <PackageVersion Include="Dapper" Version="2.1.89" />
     <PackageVersion Include="Npgsql" Version="10.0.3" />
