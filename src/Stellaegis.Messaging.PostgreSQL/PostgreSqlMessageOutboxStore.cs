@@ -1,11 +1,11 @@
+using System.Data;
 using System.Text.Json;
-using Dapper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using NpgsqlTypes;
 using Stellaegis.Messaging.Outbox;
 using Stellaegis.Primitives;
-using Stellaegis.Primitives.Data;
 
 namespace Stellaegis.Messaging.PostgreSQL;
 
@@ -30,11 +30,6 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
     private readonly MessagingDatabaseOptions _options;
     private readonly ILogger<PostgreSqlMessageOutboxStore> _logger;
 
-    static PostgreSqlMessageOutboxStore()
-    {
-        PrimitiveTypeHandlers.Register();
-        SnakeCaseTypeMap<ClaimRow>.Register();
-    }
 
     /// <summary>Creates the store, validating its options.</summary>
     /// <exception cref="OptionsValidationException">The options keep the store from working.</exception>
@@ -71,34 +66,32 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
             returning outbox_unique_id
             """;
 
-        var parameters = new
-        {
-            compartment = space.Compartment,
-            payloadJson,
-            passphrase = _options.ActivePassphrase,
-            keySlot = (short)_options.ActiveKeySlot,
-            idempotencyKey = message.IdempotencyKey,
-            transportName,
-        };
-
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        var inserted = await connection.ExecuteScalarAsync<Guid?>(
-            new CommandDefinition(sql, parameters, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        await using var insert = new NpgsqlCommand(sql, connection);
+        insert.Parameters.Add("compartment", NpgsqlDbType.Text).Value = (object?)space.Compartment?.Value ?? DBNull.Value;
+        insert.Parameters.Add("payloadJson", NpgsqlDbType.Text).Value = payloadJson;
+        insert.Parameters.Add("passphrase", NpgsqlDbType.Text).Value = _options.ActivePassphrase;
+        insert.Parameters.Add("keySlot", NpgsqlDbType.Smallint).Value = (short)_options.ActiveKeySlot;
+        insert.Parameters.Add("idempotencyKey", NpgsqlDbType.Text).Value = (object?)message.IdempotencyKey ?? DBNull.Value;
+        insert.Parameters.Add("transportName", NpgsqlDbType.Text).Value = (object?)transportName ?? DBNull.Value;
 
-        if (inserted is { } id)
+        // No row returned: the conflict on (compartment, idempotency_key) left the insert undone.
+        if (await insert.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is Guid id)
             return id;
 
-        // Conflict on (compartment, idempotency_key): an entry already exists — return its id (neutralized).
-        return await connection.ExecuteScalarAsync<Guid>(new CommandDefinition(
+        // An entry already exists — return its id (neutralized).
+        await using var existing = new NpgsqlCommand(
             """
             select outbox_unique_id
             from   msg.outbox
             where  compartment is not distinct from @compartment
               and  idempotency_key = @idempotencyKey
             """,
-            new { compartment = space.Compartment, idempotencyKey = message.IdempotencyKey },
-            cancellationToken: cancellationToken)).ConfigureAwait(false);
+            connection);
+        existing.Parameters.Add("compartment", NpgsqlDbType.Text).Value = (object?)space.Compartment?.Value ?? DBNull.Value;
+        existing.Parameters.Add("idempotencyKey", NpgsqlDbType.Text).Value = (object?)message.IdempotencyKey ?? DBNull.Value;
+        return (Guid)(await existing.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
     }
 
     /// <inheritdoc />
@@ -134,20 +127,22 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
                 pgp_sym_decrypt(o.payload, case o.key_slot when 1 then @pass1 when 2 then @pass2 end)::text as payload_json
             """;
 
-        var parameters = new
-        {
-            batchSize,
-            lease = leaseDuration,
-            pass1 = _options.GetPassphrase(1),
-            pass2 = _options.GetPassphrase(2),
-        };
-
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        var rows = await connection.QueryAsync<ClaimRow>(
-            new CommandDefinition(sql, parameters, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("batchSize", NpgsqlDbType.Integer).Value = batchSize;
+        command.Parameters.Add("lease", NpgsqlDbType.Interval).Value = leaseDuration;
+        command.Parameters.Add("pass1", NpgsqlDbType.Text).Value = _options.GetPassphrase(1);
+        command.Parameters.Add("pass2", NpgsqlDbType.Text).Value = _options.GetPassphrase(2);
 
-        return rows.OrderBy(r => r.OutboxId).Select(ToEntry).ToList();
+        var claimed = new List<(long OutboxId, OutboxEntry Entry)>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                claimed.Add((reader.GetInt64("outbox_id"), Read(reader)));
+        }
+
+        return claimed.OrderBy(row => row.OutboxId).Select(row => row.Entry).ToList();
     }
 
     /// <inheritdoc />
@@ -157,19 +152,22 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
 
         if (retainUntil is null)
         {
-            await connection.ExecuteAsync(new CommandDefinition(
-                "delete from msg.outbox where outbox_unique_id = @messageId",
-                new { messageId }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+            await using var delete = new NpgsqlCommand("delete from msg.outbox where outbox_unique_id = @messageId", connection);
+            delete.Parameters.Add("messageId", NpgsqlDbType.Uuid).Value = messageId;
+            await delete.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        await connection.ExecuteAsync(new CommandDefinition(
+        await using var command = new NpgsqlCommand(
             """
             update msg.outbox
             set    status = 'sent'::msg.outbox_status, sent_at = now(), purge_at = @retainUntil
             where  outbox_unique_id = @messageId
             """,
-            new { messageId, retainUntil }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+            connection);
+        command.Parameters.Add("messageId", NpgsqlDbType.Uuid).Value = messageId;
+        command.Parameters.Add("retainUntil", NpgsqlDbType.TimestampTz).Value = retainUntil.Value;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -177,13 +175,17 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        await connection.ExecuteAsync(new CommandDefinition(
+        await using var command = new NpgsqlCommand(
             """
             update msg.outbox
             set    attempts = attempts + 1, next_attempt_at = @nextAttemptAt, last_error = @error
             where  outbox_unique_id = @messageId
             """,
-            new { messageId, nextAttemptAt, error }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+            connection);
+        command.Parameters.Add("messageId", NpgsqlDbType.Uuid).Value = messageId;
+        command.Parameters.Add("nextAttemptAt", NpgsqlDbType.TimestampTz).Value = nextAttemptAt;
+        command.Parameters.Add("error", NpgsqlDbType.Text).Value = error;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -191,14 +193,18 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        await connection.ExecuteAsync(new CommandDefinition(
+        await using var command = new NpgsqlCommand(
             """
             update msg.outbox
             set    status = 'dead_letter'::msg.outbox_status, attempts = attempts + 1,
                    failed_at = now(), purge_at = @purgeAt, last_error = @error
             where  outbox_unique_id = @messageId
             """,
-            new { messageId, purgeAt, error }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+            connection);
+        command.Parameters.Add("messageId", NpgsqlDbType.Uuid).Value = messageId;
+        command.Parameters.Add("purgeAt", NpgsqlDbType.TimestampTz).Value = purgeAt;
+        command.Parameters.Add("error", NpgsqlDbType.Text).Value = error;
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -206,9 +212,10 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
     {
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        return await connection.ExecuteAsync(new CommandDefinition(
+        await using var command = new NpgsqlCommand(
             "delete from msg.outbox where status <> 'pending'::msg.outbox_status and purge_at <= now()",
-            cancellationToken: cancellationToken)).ConfigureAwait(false);
+            connection);
+        return await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -220,9 +227,9 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
 
         await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        var removed = await connection.ExecuteAsync(new CommandDefinition(
-            "delete from msg.outbox where compartment = @compartment",
-            new { compartment = compartment.Value }, cancellationToken: cancellationToken)).ConfigureAwait(false);
+        await using var command = new NpgsqlCommand("delete from msg.outbox where compartment = @compartment", connection);
+        command.Parameters.Add("compartment", NpgsqlDbType.Text).Value = compartment.Value;
+        var removed = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation("Purged {Count} messages of compartment {Compartment} by {Actor}.", removed, compartment, actor);
         return removed;
@@ -234,25 +241,18 @@ internal sealed class PostgreSqlMessageOutboxStore : IMessageOutboxStore, IAsync
     /// <inheritdoc />
     public void Dispose() => _dataSource.Dispose();
 
-    private static OutboxEntry ToEntry(ClaimRow r) => new()
+    private static OutboxEntry Read(NpgsqlDataReader row)
     {
-        MessageId = r.OutboxUniqueId,
-        Space = r.Compartment is { } compartment ? Space.Of(compartment) : Space.Shared,
-        Message = JsonSerializer.Deserialize<EmailMessage>(r.PayloadJson, PayloadJson)
-            ?? throw new InvalidOperationException($"Outbox payload for {r.OutboxUniqueId} deserialized to null."),
-        TransportName = r.TransportName,
-        Attempts = r.Attempts,
-        CreatedAt = r.CreatedAt,
-    };
-
-    private sealed class ClaimRow
-    {
-        public long OutboxId { get; set; }
-        public Guid OutboxUniqueId { get; set; }
-        public Compartment? Compartment { get; set; }
-        public string? TransportName { get; set; }
-        public int Attempts { get; set; }
-        public DateTimeOffset CreatedAt { get; set; }
-        public string PayloadJson { get; set; } = string.Empty;
+        var messageId = row.GetGuid("outbox_unique_id");
+        return new()
+        {
+            MessageId = messageId,
+            Space = row.IsDBNull("compartment") ? Space.Shared : Space.Of(Compartment.Parse(row.GetString("compartment"))),
+            Message = JsonSerializer.Deserialize<EmailMessage>(row.GetString("payload_json"), PayloadJson)
+                ?? throw new InvalidOperationException($"Outbox payload for {messageId} deserialized to null."),
+            TransportName = row.IsDBNull("transport_name") ? null : row.GetString("transport_name"),
+            Attempts = row.GetInt32("attempts"),
+            CreatedAt = row.GetFieldValue<DateTimeOffset>("created_at"),
+        };
     }
 }

@@ -10,7 +10,6 @@ alongside them, each under its own license.
 | MailKit, and MimeKit under it | `Stellaegis.Messaging.MailKit` | MIT | <https://github.com/jstedfast/MailKit> |
 | System.Security.Cryptography.Pkcs | `Stellaegis.Messaging.MailKit` | MIT | <https://github.com/dotnet/runtime> |
 | Npgsql | `Stellaegis.Messaging.PostgreSQL` | PostgreSQL | <https://github.com/npgsql/npgsql> |
-| Dapper | `Stellaegis.Messaging.PostgreSQL` | Apache-2.0 | <https://github.com/DapperLib/Dapper> |
 | Stellaegis.Primitives, and Stellaegis.Primitives.Hosting | all packages | MIT | <https://github.com/Stellaegis/Stellaegis.Primitives> |
 | Stellaegis.Primitives.Data | `Stellaegis.Messaging.PostgreSQL` | MIT | <https://github.com/Stellaegis/Stellaegis.Primitives> |
 | Stellaegis.Secrets | `Stellaegis.Messaging.Secrets` | MIT | <https://github.com/Stellaegis/Stellaegis.Secrets> |

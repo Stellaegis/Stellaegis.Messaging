@@ -22,7 +22,7 @@ The library is split so that you only take the dependencies of what you use.
 | `Stellaegis.Messaging` | `EmailMessage` and `IEmailSender`, the configuration of a space and its reading from a configuration section, the sender-address policy, the outbox and its background worker, an in-memory outbox store | `Stellaegis.Primitives`, `Stellaegis.Primitives.Hosting`, Microsoft.Extensions abstractions |
 | `Stellaegis.Messaging.Secrets` | The configuration of each space in a secrets vault, read through a cache, and a store to edit it | `Stellaegis.Secrets`, `Stellaegis.Caching` |
 | `Stellaegis.Messaging.MailKit` | The SMTP transport, on MailKit: Basic or client-certificate authentication, explicit envelope sender | MailKit |
-| `Stellaegis.Messaging.PostgreSQL` | A durable outbox store, messages encrypted at rest with pgcrypto, and the declaration of its database for installation and verification | Npgsql, Dapper, `Stellaegis.Primitives.Data` |
+| `Stellaegis.Messaging.PostgreSQL` | A durable outbox store, messages encrypted at rest with pgcrypto, and the declaration of its database for installation and verification | Npgsql, `Stellaegis.Primitives.Data` |
 
 The transport package is named after the library it uses, so that another transport — another SMTP
 client, or the HTTP API of an email provider — can be added as a package of its own.

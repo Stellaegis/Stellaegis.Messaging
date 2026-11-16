@@ -19,7 +19,6 @@
     <PackageVersion Include="MailKit" Version="4.18.2" />
     <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
     <!-- PostgreSQL -->
-    <PackageVersion Include="Dapper" Version="2.1.89" />
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <!-- Testing -->
     <PackageVersion Include="xunit.v3" Version="4.0.3" />
